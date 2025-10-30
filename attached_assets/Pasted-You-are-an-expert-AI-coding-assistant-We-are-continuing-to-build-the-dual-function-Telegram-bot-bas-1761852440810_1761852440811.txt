@@ -1,0 +1,73 @@
+You are an expert AI coding assistant. We are continuing to build the dual-function Telegram bot based on the project context provided previously.
+
+Your Next Task: Phase 3 (Seller Management & Payouts)
+Your objective is to build the features that allow sellers to track their earnings and request withdrawals. You will also implement the complete backend system for admins to manage and process these payout requests.
+
+Please complete the following four tasks:
+
+3.1. "Profile" Section and Payout Info
+First, implement the "Profile" button for sellers:
+
+Display Stats: When pressed, this button should query the Users and Sold_Accounts tables to display the following for the user:
+
+Lifetime Earnings
+
+Current Balance (seller_balance)
+
+Total Withdrawn
+
+Accounts Sold
+
+Banned Accounts
+
+Referral Earnings
+
+
+Set Payout Info: Add a feature or button within this section for users to set/update their payout information (e.g., their UPI ID), as this is required for withdrawals.
+
+3.2. "Withdraw" Flow for Sellers
+Next, implement the "Withdraw" button flow:
+
+
+Request Amount: Ask the user for the withdrawal amount.
+
+
+Progressive Limits: Implement logic to check the user's withdrawal history (1st, 2nd, 3rd, etc.) and enforce the correct minimum withdrawal limit.
+
+
+Validation: Check if the requested amount is valid (i.e., it is greater than or equal to the current minimum limit and less than or equal to the user's seller_balance).
+
+
+Create Request: If valid, create a new record in the Withdrawals table with a status of pending.
+
+
+Admin Notification: Automatically send a notification to the admins about the new pending withdrawal request.
+
+3.3. Admin Withdrawal Management
+Now, build the backend for admins to handle the requests created in the previous step:
+
+
+List Requests: Implement an admin command /withdraws pending to list all pending requests.
+
+Detail View: Create an inline keyboard flow for the admin to select a request. This must show a detailed view including the user's stats, the request amount, and the user's saved payout/UPI info.
+
+
+Action Buttons: Add "Approve" and "X Reject" buttons.
+
+
+On Approve: The logic must update the request status to approved, deduct the amount from the user's seller_balance, add it to their Total Withdrawn stat, and notify the user of the successful withdrawal.
+
+
+On Reject: The logic must update the request status to rejected and notify the user.
+
+3.4. Admin Control Commands
+Finally, implement the following admin-only commands to manage sellers and withdrawal settings:
+
+
+/withdrawlimit 10,50,100,500,5000: A command to set the progressive minimum withdrawal limits.
+
+
+/stopwithdraw <username> & /allowwithdraw <username>: These commands must toggle a can_withdraw boolean flag for the specified user in the Users table.
+
+
+/ban <username> & /unban <username>: These commands must toggle the is_banned status for the specified user in the Users table.

@@ -244,6 +244,206 @@ class Database:
         cursor.close()
         return True
     
+    def get_user_stats(self, user_id):
+        cursor = self.connection.cursor()
+        cursor.execute("""
+            SELECT 
+                seller_balance,
+                referral_earnings,
+                total_withdrawn,
+                payout_method,
+                payout_details,
+                can_withdraw,
+                is_banned
+            FROM users
+            WHERE user_id = %s
+        """, (user_id,))
+        result = cursor.fetchone()
+        cursor.close()
+        return result
+    
+    def get_banned_accounts_count(self, user_id):
+        cursor = self.connection.cursor()
+        cursor.execute("""
+            SELECT COUNT(*) as count 
+            FROM sold_accounts 
+            WHERE seller_user_id = %s AND account_status = 'banned'
+        """, (user_id,))
+        result = cursor.fetchone()
+        cursor.close()
+        return result['count'] if result else 0
+    
+    def set_payout_info(self, user_id, method, details):
+        cursor = self.connection.cursor()
+        cursor.execute("""
+            UPDATE users
+            SET payout_method = %s,
+                payout_details = %s,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE user_id = %s
+        """, (method, details, user_id))
+        cursor.close()
+        return True
+    
+    def create_withdrawal(self, user_id, amount, method, details):
+        cursor = self.connection.cursor()
+        cursor.execute("""
+            INSERT INTO withdrawals (user_id, amount, withdrawal_method, withdrawal_details)
+            VALUES (%s, %s, %s, %s)
+            RETURNING id
+        """, (user_id, amount, method, details))
+        result = cursor.fetchone()
+        cursor.close()
+        return result['id'] if result else None
+    
+    def get_user_withdrawal_count(self, user_id):
+        cursor = self.connection.cursor()
+        cursor.execute("""
+            SELECT COUNT(*) as count 
+            FROM withdrawals 
+            WHERE user_id = %s AND status = 'approved'
+        """, (user_id,))
+        result = cursor.fetchone()
+        cursor.close()
+        return result['count'] if result else 0
+    
+    def get_withdrawal_limits(self):
+        cursor = self.connection.cursor()
+        cursor.execute("SELECT value FROM settings WHERE key = 'withdrawal_limits'")
+        result = cursor.fetchone()
+        cursor.close()
+        if result:
+            return [float(x) for x in result['value'].split(',')]
+        return [10.0, 50.0, 100.0, 500.0, 5000.0]
+    
+    def set_withdrawal_limits(self, limits):
+        cursor = self.connection.cursor()
+        limits_str = ','.join([str(x) for x in limits])
+        cursor.execute("""
+            INSERT INTO settings (key, value, updated_at)
+            VALUES ('withdrawal_limits', %s, CURRENT_TIMESTAMP)
+            ON CONFLICT (key) DO UPDATE
+            SET value = %s, updated_at = CURRENT_TIMESTAMP
+        """, (limits_str, limits_str))
+        cursor.close()
+        return True
+    
+    def get_pending_withdrawals(self):
+        cursor = self.connection.cursor()
+        cursor.execute("""
+            SELECT w.*, u.username, u.first_name, u.last_name
+            FROM withdrawals w
+            JOIN users u ON w.user_id = u.user_id
+            WHERE w.status = 'pending'
+            ORDER BY w.requested_at ASC
+        """)
+        results = cursor.fetchall()
+        cursor.close()
+        return results
+    
+    def get_withdrawal_by_id(self, withdrawal_id):
+        cursor = self.connection.cursor()
+        cursor.execute("""
+            SELECT w.*, u.username, u.first_name, u.last_name, u.seller_balance,
+                   u.referral_earnings, u.total_withdrawn, u.payout_method, u.payout_details
+            FROM withdrawals w
+            JOIN users u ON w.user_id = u.user_id
+            WHERE w.id = %s
+        """, (withdrawal_id,))
+        result = cursor.fetchone()
+        cursor.close()
+        return result
+    
+    def approve_withdrawal(self, withdrawal_id, admin_id, notes=None):
+        cursor = self.connection.cursor()
+        try:
+            cursor.execute("SELECT user_id, amount FROM withdrawals WHERE id = %s", (withdrawal_id,))
+            withdrawal = cursor.fetchone()
+            
+            if not withdrawal:
+                cursor.close()
+                return False
+            
+            user_id = withdrawal['user_id']
+            amount = withdrawal['amount']
+            
+            cursor.execute("""
+                UPDATE withdrawals
+                SET status = 'approved',
+                    processed_at = CURRENT_TIMESTAMP,
+                    processed_by = %s,
+                    admin_notes = %s
+                WHERE id = %s
+            """, (admin_id, notes, withdrawal_id))
+            
+            cursor.execute("""
+                UPDATE users
+                SET seller_balance = seller_balance - %s,
+                    total_withdrawn = total_withdrawn + %s,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE user_id = %s
+            """, (amount, amount, user_id))
+            
+            cursor.close()
+            return True
+        except Exception as e:
+            cursor.close()
+            print(f"Error approving withdrawal: {e}")
+            return False
+    
+    def reject_withdrawal(self, withdrawal_id, admin_id, notes=None):
+        cursor = self.connection.cursor()
+        cursor.execute("""
+            UPDATE withdrawals
+            SET status = 'rejected',
+                processed_at = CURRENT_TIMESTAMP,
+                processed_by = %s,
+                admin_notes = %s
+            WHERE id = %s
+        """, (admin_id, notes, withdrawal_id))
+        cursor.close()
+        return True
+    
+    def get_user_by_username(self, username):
+        cursor = self.connection.cursor()
+        cursor.execute("SELECT * FROM users WHERE username = %s", (username,))
+        result = cursor.fetchone()
+        cursor.close()
+        return result
+    
+    def ban_user(self, user_id):
+        cursor = self.connection.cursor()
+        cursor.execute("""
+            UPDATE users
+            SET is_banned = TRUE,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE user_id = %s
+        """, (user_id,))
+        cursor.close()
+        return True
+    
+    def unban_user(self, user_id):
+        cursor = self.connection.cursor()
+        cursor.execute("""
+            UPDATE users
+            SET is_banned = FALSE,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE user_id = %s
+        """, (user_id,))
+        cursor.close()
+        return True
+    
+    def set_withdraw_permission(self, user_id, can_withdraw):
+        cursor = self.connection.cursor()
+        cursor.execute("""
+            UPDATE users
+            SET can_withdraw = %s,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE user_id = %s
+        """, (can_withdraw, user_id))
+        cursor.close()
+        return True
+    
     def close(self):
         if self.connection:
             self.connection.close()

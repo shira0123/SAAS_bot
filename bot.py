@@ -4,6 +4,8 @@ from telegram.ext import (
     Application,
     CommandHandler,
     MessageHandler,
+    CallbackQueryHandler,
+    ConversationHandler,
     filters,
     ContextTypes,
 )
@@ -11,6 +13,10 @@ from database import Database
 from config import BOT_TOKEN, MIN_WITHDRAWAL
 import random
 import string
+
+import seller_profile
+import seller_withdrawals
+import admin_controls
 
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -97,68 +103,6 @@ Choose an option from the menu below:
     
     await update.message.reply_text(welcome_message, reply_markup=menu)
 
-async def handle_withdraw(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
-    user_data = db.get_user(user.id)
-    
-    if not user_data['can_withdraw']:
-        await update.message.reply_text("❌ Withdrawals are currently disabled for your account.")
-        return
-    
-    balance = float(user_data['seller_balance'])
-    
-    message = f"""
-💸 **Withdrawal**
-
-**Available Balance:** ${balance:.2f}
-**Minimum Withdrawal:** ${MIN_WITHDRAWAL}
-
-To request a withdrawal, type:
-/withdraw <amount> <method> <details>
-
-**Example:**
-/withdraw 10 PayPal myemail@example.com
-
-**Supported Methods:**
-• PayPal
-• Bank Transfer
-• Crypto (USDT)
-• Wise
-
-Your withdrawal will be processed by an admin within 24-48 hours.
-"""
-    await update.message.reply_text(message)
-
-async def handle_profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
-    user_data = db.get_user(user.id)
-    
-    accounts_sold = db.get_user_accounts_count(user.id)
-    total_earned = db.get_user_total_earnings(user.id)
-    
-    message = f"""
-👤 **Your Profile**
-
-**User ID:** `{user.id}`
-**Username:** @{user.username or 'Not set'}
-**Name:** {user.first_name} {user.last_name or ''}
-
-**💰 Balances:**
-• Seller Balance: ${user_data['seller_balance']:.2f}
-• Buyer Balance: ${user_data['buyer_wallet_balance']:.2f}
-
-**📊 Statistics:**
-• Accounts Sold: {accounts_sold}
-• Total Earned: ${total_earned:.2f}
-• Referral Earnings: ${user_data['referral_earnings']:.2f}
-
-**🎁 Referral Code:** `{user_data['referral_code']}`
-• Share: t.me/{context.bot.username}?start={user_data['referral_code']}
-
-**Status:** {'✅ Active' if not user_data['is_banned'] else '❌ Banned'}
-"""
-    await update.message.reply_text(message, parse_mode='Markdown')
-
 async def handle_referral(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     user_data = db.get_user(user.id)
@@ -243,14 +187,17 @@ async def setprice(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
     
-    if text == "💸 Withdraw":
-        await handle_withdraw(update, context)
-    elif text == "👤 Profile":
-        await handle_profile(update, context)
+    if text == "👤 Profile":
+        await seller_profile.show_profile(update, context)
     elif text == "🎁 Refer & Earn":
         await handle_referral(update, context)
     elif text == "💬 Support":
         await handle_support(update, context)
+    elif text == "🔙 Back to Menu":
+        await update.message.reply_text(
+            "📱 Main Menu",
+            reply_markup=get_seller_menu()
+        )
     elif text == "🔙 Back to User Menu":
         if db.is_admin(update.effective_user.id):
             await update.message.reply_text("Switching to user menu...", reply_markup=get_seller_menu())
@@ -258,7 +205,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         is_admin = db.is_admin(update.effective_user.id)
         if is_admin and text in ["📊 Statistics", "👥 Users", "💳 Withdrawals", "📱 Accounts", "⚙️ Settings"]:
             await update.message.reply_text(f"Admin feature '{text}' - Coming soon in future phases!")
-        else:
+        elif text not in ["💰 Sell TG Account", "💸 Withdraw", "💳 Set Payout Info"]:
             await update.message.reply_text("Please use the menu buttons below to navigate.")
 
 def main():
@@ -277,9 +224,41 @@ def main():
     
     from account_seller import get_account_sell_handler
     
+    payout_handler = ConversationHandler(
+        entry_points=[MessageHandler(filters.Regex("^💳 Set Payout Info$"), seller_profile.start_set_payout)],
+        states={
+            seller_profile.PAYOUT_METHOD: [MessageHandler(filters.TEXT & ~filters.COMMAND, seller_profile.receive_payout_method)],
+            seller_profile.PAYOUT_DETAILS: [MessageHandler(filters.TEXT & ~filters.COMMAND, seller_profile.receive_payout_details)],
+        },
+        fallbacks=[CommandHandler("cancel", seller_profile.cancel_payout_setup)],
+    )
+    
+    withdraw_handler = ConversationHandler(
+        entry_points=[MessageHandler(filters.Regex("^💸 Withdraw$"), seller_withdrawals.start_withdraw)],
+        states={
+            seller_withdrawals.REQUEST_AMOUNT: [MessageHandler(filters.TEXT & ~filters.COMMAND, seller_withdrawals.receive_amount)],
+        },
+        fallbacks=[CommandHandler("cancel", seller_withdrawals.cancel_withdraw)],
+    )
+    
     application.add_handler(get_account_sell_handler())
+    application.add_handler(payout_handler)
+    application.add_handler(withdraw_handler)
+    
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("setprice", setprice))
+    application.add_handler(CommandHandler("withdraws", admin_controls.list_pending_withdrawals))
+    application.add_handler(CommandHandler("withdrawlimit", admin_controls.set_withdrawal_limits))
+    application.add_handler(CommandHandler("ban", admin_controls.ban_user_command))
+    application.add_handler(CommandHandler("unban", admin_controls.unban_user_command))
+    application.add_handler(CommandHandler("stopwithdraw", admin_controls.stop_withdraw_command))
+    application.add_handler(CommandHandler("allowwithdraw", admin_controls.allow_withdraw_command))
+    
+    application.add_handler(CallbackQueryHandler(admin_controls.view_withdrawal_detail, pattern="^withdrawal_view_"))
+    application.add_handler(CallbackQueryHandler(admin_controls.approve_withdrawal, pattern="^withdrawal_approve_"))
+    application.add_handler(CallbackQueryHandler(admin_controls.reject_withdrawal, pattern="^withdrawal_reject_"))
+    application.add_handler(CallbackQueryHandler(admin_controls.back_to_withdrawal_list, pattern="^withdrawal_back$"))
+    
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     
     logger.info("Bot started successfully!")
