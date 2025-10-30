@@ -101,6 +101,20 @@ class Database:
             CREATE INDEX IF NOT EXISTS idx_withdrawals_status ON withdrawals(status)
         """)
         
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS settings (
+                key VARCHAR(50) PRIMARY KEY,
+                value TEXT NOT NULL,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        
+        cursor.execute("""
+            INSERT INTO settings (key, value)
+            VALUES ('account_price', '10.00')
+            ON CONFLICT (key) DO NOTHING
+        """)
+        
         cursor.close()
         print("Database schema initialized successfully")
     
@@ -178,6 +192,57 @@ class Database:
             cursor.close()
             print(f"Error creating user: {e}")
             return None
+    
+    def get_account_price(self):
+        cursor = self.connection.cursor()
+        cursor.execute("SELECT value FROM settings WHERE key = 'account_price'")
+        result = cursor.fetchone()
+        cursor.close()
+        return float(result['value']) if result else 10.00
+    
+    def set_account_price(self, price):
+        cursor = self.connection.cursor()
+        cursor.execute("""
+            INSERT INTO settings (key, value, updated_at)
+            VALUES ('account_price', %s, CURRENT_TIMESTAMP)
+            ON CONFLICT (key) DO UPDATE
+            SET value = %s, updated_at = CURRENT_TIMESTAMP
+        """, (str(price), str(price)))
+        cursor.close()
+        return True
+    
+    def create_sold_account(self, seller_user_id, phone_number, session_string):
+        cursor = self.connection.cursor()
+        cursor.execute("""
+            INSERT INTO sold_accounts (seller_user_id, phone_number, session_string, account_status)
+            VALUES (%s, %s, %s, 'processing')
+            RETURNING id
+        """, (seller_user_id, phone_number, session_string))
+        result = cursor.fetchone()
+        cursor.close()
+        return result['id'] if result else None
+    
+    def mark_account_active(self, account_id):
+        cursor = self.connection.cursor()
+        cursor.execute("""
+            UPDATE sold_accounts
+            SET account_status = 'active'
+            WHERE id = %s
+        """, (account_id,))
+        cursor.close()
+        return True
+    
+    def update_referral_earnings(self, user_id, amount):
+        cursor = self.connection.cursor()
+        cursor.execute("""
+            UPDATE users
+            SET referral_earnings = referral_earnings + %s,
+                seller_balance = seller_balance + %s,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE user_id = %s
+        """, (amount, amount, user_id))
+        cursor.close()
+        return True
     
     def close(self):
         if self.connection:

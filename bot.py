@@ -8,7 +8,7 @@ from telegram.ext import (
     ContextTypes,
 )
 from database import Database
-from config import BOT_TOKEN, ACCOUNT_PRICE, MIN_WITHDRAWAL
+from config import BOT_TOKEN, MIN_WITHDRAWAL
 import random
 import string
 
@@ -65,6 +65,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             referred_by=referred_by
         )
         
+        account_price = db.get_account_price()
         welcome_message = f"""
 🎉 Welcome to the Account Marketplace Bot!
 
@@ -72,7 +73,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 You can earn money by selling your Telegram accounts to our platform.
 
-💰 **Current Rate:** ${ACCOUNT_PRICE} per account
+💰 **Current Rate:** ${account_price:.2f} per account
 💸 **Minimum Withdrawal:** ${MIN_WITHDRAWAL}
 🎁 **Referral Bonus:** Earn commission for every friend you invite!
 
@@ -95,37 +96,6 @@ Choose an option from the menu below:
     menu = get_admin_menu() if is_admin else get_seller_menu()
     
     await update.message.reply_text(welcome_message, reply_markup=menu)
-
-async def handle_sell_account(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
-    user_data = db.get_user(user.id)
-    
-    if user_data['is_banned']:
-        await update.message.reply_text("❌ Your account is banned. Please contact support.")
-        return
-    
-    message = f"""
-📱 **Sell Your Telegram Account**
-
-We pay ${ACCOUNT_PRICE} for each verified Telegram account!
-
-**Requirements:**
-✅ Active Telegram account
-✅ Must have phone number access
-✅ Must be able to receive SMS/calls
-
-**Process:**
-1. You provide your phone number
-2. We send a login code
-3. You provide the code
-4. We verify and capture the session
-5. Money is added to your balance instantly!
-
-⚠️ **Note:** Once sold, the account will be used for our services. Make sure you're comfortable with this.
-
-To start selling, type /sell and follow the instructions.
-"""
-    await update.message.reply_text(message)
 
 async def handle_withdraw(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
@@ -239,12 +209,41 @@ We typically respond within a few hours!
 """
     await update.message.reply_text(message)
 
+async def setprice(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not db.is_admin(update.effective_user.id):
+        await update.message.reply_text("❌ This command is only available to admins.")
+        return
+    
+    if not context.args or len(context.args) != 1:
+        current_price = db.get_account_price()
+        await update.message.reply_text(
+            f"💰 **Current Account Price:** ${current_price:.2f}\n\n"
+            "**Usage:** /setprice <amount>\n"
+            "**Example:** /setprice 15.00",
+            parse_mode='Markdown'
+        )
+        return
+    
+    try:
+        new_price = float(context.args[0])
+        if new_price <= 0:
+            await update.message.reply_text("❌ Price must be greater than 0")
+            return
+        
+        db.set_account_price(new_price)
+        await update.message.reply_text(
+            f"✅ **Account Price Updated!**\n\n"
+            f"New price: ${new_price:.2f} per account\n\n"
+            "This will apply to all new account sales.",
+            parse_mode='Markdown'
+        )
+    except ValueError:
+        await update.message.reply_text("❌ Invalid price format. Please use a number (e.g., 15.00)")
+
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
     
-    if text == "💰 Sell TG Account":
-        await handle_sell_account(update, context)
-    elif text == "💸 Withdraw":
+    if text == "💸 Withdraw":
         await handle_withdraw(update, context)
     elif text == "👤 Profile":
         await handle_profile(update, context)
@@ -258,7 +257,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         is_admin = db.is_admin(update.effective_user.id)
         if is_admin and text in ["📊 Statistics", "👥 Users", "💳 Withdrawals", "📱 Accounts", "⚙️ Settings"]:
-            await update.message.reply_text(f"Admin feature '{text}' - Coming soon in Phase 2!")
+            await update.message.reply_text(f"Admin feature '{text}' - Coming soon in future phases!")
         else:
             await update.message.reply_text("Please use the menu buttons below to navigate.")
 
@@ -276,7 +275,11 @@ def main():
     
     application = Application.builder().token(BOT_TOKEN).build()
     
+    from account_seller import get_account_sell_handler
+    
+    application.add_handler(get_account_sell_handler())
     application.add_handler(CommandHandler("start", start))
+    application.add_handler(CommandHandler("setprice", setprice))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     
     logger.info("Bot started successfully!")

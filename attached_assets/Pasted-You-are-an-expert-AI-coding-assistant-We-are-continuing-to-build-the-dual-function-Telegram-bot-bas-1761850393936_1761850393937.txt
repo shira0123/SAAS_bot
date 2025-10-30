@@ -1,0 +1,58 @@
+You are an expert AI coding assistant. We are continuing to build the dual-function Telegram bot based on the project context provided in Phase 1.
+
+Your Next Task: Phase 2 (Core Feature - Account Selling Workflow)
+Your objective is to build the complete, automated flow for "Sellers" to sell their Telegram accounts to the system. This involves creating the conversation handler, integrating the client-side library (Telethon/Pyrogram) to take over the account, and processing the account for use in our SaaS pool.
+
+Please complete the following four tasks:
+
+2.1. "Sell TG Account" Conversation Flow
+First, implement the conversational handler that triggers when a user presses the Sell TG Account button (created in Phase 1):
+
+Conversation Logic: Develop a conversation flow that sequentially asks the user for:
+
+Their Phone Number.
+
+The OTP (Login Code) sent to them.
+
+Their 2FA Password (if it is enabled).
+
+
+Session Creation: You must use Telethon or Pyrogram to take these credentials, log into the user's Telegram account, and generate a session string.
+
+2.2. Backend Session Processing
+Once the login is successful and the session string is created, you must execute a backend script to secure the account:
+
+
+Terminate Other Sessions: Programmatically terminate all other active sessions for that account to ensure we have sole control.
+
+
+Reset 2FA Password: Script the bot to change the account's 2FA password to a secure default (e.g., "5000").
+
+
+Save to Database: Securely save the session string and account details (like phone number) to the Sold_Accounts table.
+
+
+Tag for SaaS: Update the account's status in the Sold_Accounts table to active, making it available for the views/reactions pool.
+
+2.3. User Confirmation and Payout
+After the backend processing, you must finalize the process with the user:
+
+
+Confirmation: The bot must ask the user to confirm they have been logged out by showing a button like "I Logged Out".
+
+
+Verification: When the user presses this button, the backend must verify that only the server's session remains active.
+
+
+Payout: If verified, instantly add the pre-defined payout amount (from the yet-to-be-created admin setting) to the user's seller_balance in the Users table.
+
+Success Message: Send a confirmation message to the user, such as: Account Sold Successfully | Payout: ₹X | Account ID: #12345.
+
+2.4. Admin Price Control
+Finally, you must give the Admin a way to control the payout amount:
+
+
+Implement Command: Create a new admin-only command: /setprice <amount>.
+
+
+Logic: This command should set the default payout amount that is added to a user's seller_balance upon successful account verification (as described in Task 2.3).
