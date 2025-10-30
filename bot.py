@@ -18,6 +18,8 @@ import seller_profile
 import seller_withdrawals
 import admin_controls
 import admin_reporting
+import buyer_menu
+import account_pool_manager
 
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -32,7 +34,7 @@ def generate_referral_code(length=8):
 
 def get_seller_menu():
     keyboard = [
-        [KeyboardButton("💰 Sell TG Account")],
+        [KeyboardButton("💰 Sell TG Account"), KeyboardButton("💎 Buyer Menu")],
         [KeyboardButton("💸 Withdraw"), KeyboardButton("👤 Profile")],
         [KeyboardButton("🎁 Refer & Earn"), KeyboardButton("💬 Support")]
     ]
@@ -192,6 +194,22 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await handle_referral(update, context)
     elif text == "💬 Support":
         await handle_support(update, context)
+    elif text == "💎 Buyer Menu":
+        await buyer_menu.show_buyer_menu(update, context)
+    elif text == "💎 Buy Plan":
+        await buyer_menu.buy_plan(update, context)
+    elif text == "💰 Deposit":
+        await buyer_menu.deposit(update, context)
+    elif text == "📋 My Plans":
+        await buyer_menu.my_plans(update, context)
+    elif text == "📊 Plan History":
+        await buyer_menu.plan_history(update, context)
+    elif text == "🎁 Referral Program":
+        await buyer_menu.buyer_referral(update, context)
+    elif text == "👔 Reseller Panel":
+        await buyer_menu.reseller_panel(update, context)
+    elif text == "🔙 Back to Seller Menu":
+        await update.message.reply_text("🔙 Switched to Seller Menu", reply_markup=get_seller_menu())
     elif text == "🔙 Back to Menu":
         await update.message.reply_text(
             "📱 Main Menu",
@@ -244,12 +262,25 @@ def main():
     application.add_handler(payout_handler)
     application.add_handler(withdraw_handler)
     
+    add_account_handler = ConversationHandler(
+        entry_points=[CommandHandler("addaccount", account_pool_manager.start_add_account)],
+        states={
+            account_pool_manager.ADD_PHONE: [MessageHandler(filters.TEXT & ~filters.COMMAND, account_pool_manager.receive_add_phone)],
+            account_pool_manager.ADD_SESSION: [MessageHandler(filters.TEXT & ~filters.COMMAND, account_pool_manager.receive_add_session)],
+        },
+        fallbacks=[CommandHandler("cancel", account_pool_manager.cancel_add_account)],
+    )
+    
+    application.add_handler(add_account_handler)
+    
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("setprice", setprice))
     application.add_handler(CommandHandler("setref", admin_reporting.setref_command))
     application.add_handler(CommandHandler("accsell", admin_reporting.accsell_command))
     application.add_handler(CommandHandler("alluser", admin_reporting.alluser_command))
     application.add_handler(CommandHandler("stats", admin_reporting.stats_command))
+    application.add_handler(CommandHandler("accounts", account_pool_manager.accounts_command))
+    application.add_handler(CommandHandler("removeaccount", account_pool_manager.remove_account_command))
     application.add_handler(CommandHandler("withdraws", admin_controls.list_pending_withdrawals))
     application.add_handler(CommandHandler("withdrawlimit", admin_controls.set_withdrawal_limits))
     application.add_handler(CommandHandler("ban", admin_controls.ban_user_command))

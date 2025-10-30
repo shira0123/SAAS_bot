@@ -5,7 +5,7 @@ A sophisticated dual-function Telegram bot that operates as a two-sided marketpl
 - **Seller Side**: Automated purchasing of Telegram accounts from users (✅ Phase 2 Complete)
 - **Buyer Side**: SaaS platform for delivering automated views and reactions to channel posts (Future)
 
-## Current Implementation (Phase 1 & 2)
+## Current Implementation (Phases 1-5)
 
 ### Completed Features
 
@@ -71,19 +71,23 @@ A sophisticated dual-function Telegram bot that operates as a two-sided marketpl
 ### Project Structure
 ```
 .
-├── bot.py                 # Main bot logic and handlers
-├── account_seller.py      # Account selling conversation flow
-├── seller_profile.py      # Seller profile and payout info
-├── seller_withdrawals.py  # Withdrawal request handling
-├── admin_controls.py      # Admin withdrawal management
-├── admin_reporting.py     # Admin reporting commands
-├── daily_report.py        # Daily stats report generator
-├── run_scheduler.py       # Scheduler for automated reports
-├── database.py            # Database operations and schema
-├── config.py              # Configuration and environment variables
-├── setup_admin.py         # Admin setup utility
-├── pyproject.toml         # Python dependencies
-└── replit.md             # This file
+├── bot.py                       # Main bot logic and handlers
+├── account_seller.py            # Account selling conversation flow
+├── seller_profile.py            # Seller profile and payout info
+├── seller_withdrawals.py        # Withdrawal request handling
+├── buyer_menu.py                # Buyer interface and SaaS features
+├── admin_controls.py            # Admin withdrawal management
+├── admin_reporting.py           # Admin reporting commands
+├── account_pool_manager.py      # Account pool management
+├── account_status_checker.py    # Automated account status verification
+├── account_monitor_scheduler.py # Account monitoring scheduler
+├── daily_report.py              # Daily stats report generator
+├── run_scheduler.py             # Scheduler for automated reports
+├── database.py                  # Database operations and schema
+├── config.py                    # Configuration and environment variables
+├── setup_admin.py               # Admin setup utility
+├── pyproject.toml               # Python dependencies
+└── replit.md                   # This file
 ```
 
 ### Phase 4 Features (✅ Complete)
@@ -105,11 +109,44 @@ A sophisticated dual-function Telegram bot that operates as a two-sided marketpl
    - Scheduler sends daily stats to admins at midnight
    - Includes 24-hour and lifetime statistics
 
-### Next Phase Features (Phase 5+)
-- Buyer-side menu and plan purchase interface
-- Automated engagement delivery system using sold accounts
+### Phase 5 Features (✅ Complete)
+1. **Buyer UI (SaaS Interface)**:
+   - Complete buyer menu with 7 buttons
+   - Buy Plan, Deposit, My Plans interfaces
+   - Plan History tracking
+   - Buyer Referral Program
+   - Reseller Panel system
+   - Seamless switching between Seller/Buyer modes
+
+2. **Database Expansion**:
+   - `saas_orders` - Store all service orders
+   - `saas_rates` - 4 pricing tiers (per view, per day view, per reaction, per day reaction)
+   - `promo_codes` - Discount code system
+   - `saas_referrals` - Buyer referral tracking
+   - `resellers` - Reseller management
+   - `account_usage_logs` - Track which account delivers which service
+
+3. **Account Pool Manager**:
+   - `/accounts` command to view all accounts
+   - Pool statistics (active, banned, full)
+   - `/addaccount` - Manually add accounts
+   - `/removeaccount <id>` - Remove accounts
+   - Pagination support for large pools
+
+4. **Automated Account Monitoring**:
+   - `account_status_checker.py` - Checks all account statuses
+   - Detects banned/restricted accounts automatically
+   - Updates database with current status
+   - `account_monitor_scheduler.py` - Runs checks every 6 hours
+   - Low pool alert when <100 active accounts
+   - Automatic admin notifications
+
+### Next Phase Features (Phase 6+)
+- Automated engagement delivery system
 - Service delivery management (views, reactions)
-- Enhanced admin panel features
+- Promo code management UI
+- Reseller approval workflow
+- Real-time delivery monitoring
 
 ## User Preferences
 - Clean, modular code structure
@@ -118,6 +155,14 @@ A sophisticated dual-function Telegram bot that operates as a two-sided marketpl
 - Secure session and secret management
 
 ## Recent Changes
+- 2025-10-30: Phase 5 implementation completed
+  - Built complete buyer/SaaS interface with 7 menu options
+  - Expanded database with 5 new tables for SaaS operations
+  - Implemented account pool manager with manual add/remove
+  - Created automated account status checker with Telethon
+  - Built low pool alert system (<100 accounts threshold)
+  - Added account usage logging mechanism
+  - Integrated buyer menu into main bot flow
 - 2025-10-30: Phase 4 implementation completed
   - Implemented full referral system with dynamic commission rates
   - Added admin reporting commands (/accsell, /alluser, /stats)

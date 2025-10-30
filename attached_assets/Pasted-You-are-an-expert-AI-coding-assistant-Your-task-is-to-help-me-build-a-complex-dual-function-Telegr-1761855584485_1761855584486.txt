@@ -1,0 +1,80 @@
+You are an expert AI coding assistant. Your task is to help me build a complex, dual-function Telegram bot.
+
+Project Context
+What We Are Building
+We are creating a sophisticated Telegram bot that operates as a two-sided marketplace.
+
+Seller Side: The bot will automatically purchase Telegram accounts from users ("Sellers"). Users will be guided through a flow to submit their phone number and login codes, and upon successful session capture, they will be paid to an in-bot balance.
+
+Buyer (SaaS) Side: The bot will use this acquired pool of accounts to run a Software-as-a-Service (SaaS) business. "Buyers" can purchase plans to receive automated views and reactions on their channel posts, which will be delivered by the accounts we collected.
+
+Target Audience
+"Sellers": Telegram users who want to earn money by selling their accounts to the system.
+
+"Buyers": Telegram channel owners and administrators who want to purchase engagement (views, reactions). This also includes "Resellers".
+
+"Admins": The operators (us) who will manage the system, set prices, approve withdrawals, and monitor the account pool.
+
+Primary Goal
+The purpose is to create a fully automated business. We will buy a resource (Telegram accounts) and use it to sell a service (engagement). The bot must automate account acquisition, seller payouts, buyer payments, and service delivery.
+
+Your Next Task: Phase 5 (SaaS Foundation - "Buyer" UI & Account Pool Manager)
+Your objective is to build the user-facing menu for buying services and the backend admin panel for managing the account pool we acquired in Phase 2.
+
+Please complete the following four tasks:
+
+5.1. "Buyer" UI Implementation
+First, you must build the "Buyer" side user interface.
+
+Modify the main menu (or create a new bot state) to show the "Buyer" menu.
+
+This menu must display the following 7 buttons:
+
+Buy Plan
+
+Deposit
+
+My Plans
+
+Plan History
+
+Referral Program (This is a new one for buyers)
+
+Reseller Panel
+
+Support (This can be the same as the seller's)
+
+5.2. SaaS Database Schema Expansion
+Next, you must expand the database schema to support the new SaaS features. Add the following new tables/collections:
+
+SaaS_Orders: To store all plans. Must include fields for user_id, plan_type, duration, views, posts, channel, and status.
+
+SaaS_Rates: To store the 4 base rates set by the admin (e.g., Per View, Per Day View, etc.).
+
+Promo_Codes: To store promo codes, their values, and usage limits.
+
+SaaS_Referrals: To manage the buyer referral program.
+
+Resellers: To manage reseller status, margins, and sales.
+
+5.3. Admin: Account Pool Manager (Manual)
+This task is to build the core admin panel for managing the pool of accounts acquired from sellers. This is the heart of the SaaS engine.
+
+Implement an admin command (e.g., /accounts) or a button.
+
+This command must list all accounts from the Sold_Accounts table.
+
+The list must show each account's Status (e.g., Active, Banned, Full) and its Joined Channels count (e.g., "X/500").
+
+Implement a flow for an admin to Add New Account manually.
+
+Implement a flow for an admin to Remove Account.
+
+5.4. Admin: Account Pool Monitoring (Automated)
+Finally, create the automated scripts for account maintenance and logging:
+
+Check Account Status: Implement a script that logs in with each session string from the Sold_Accounts table to check its status (e.g., active or banned) and updates the database.
+
+Low Pool Alert: Implement a scheduled job that checks the number of active accounts. It must notify the admin if the active account pool drops below 100.
+
+Account Usage Logs: Create the necessary table or logging mechanism to track which account delivers which service (this will be used in a later phase).

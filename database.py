@@ -124,6 +124,114 @@ class Database:
             ON CONFLICT (key) DO NOTHING
         """)
         
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS saas_orders (
+                id SERIAL PRIMARY KEY,
+                user_id BIGINT NOT NULL,
+                plan_type VARCHAR(50) NOT NULL,
+                duration INTEGER NOT NULL,
+                views_per_post INTEGER NOT NULL,
+                total_posts INTEGER NOT NULL,
+                channel_username VARCHAR(255) NOT NULL,
+                channel_id BIGINT,
+                status VARCHAR(20) DEFAULT 'active',
+                delivered_posts INTEGER DEFAULT 0,
+                price DECIMAL(10, 2) NOT NULL,
+                promo_code VARCHAR(50),
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                expires_at TIMESTAMP,
+                FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
+            )
+        """)
+        
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS saas_rates (
+                id SERIAL PRIMARY KEY,
+                rate_type VARCHAR(50) UNIQUE NOT NULL,
+                price_per_unit DECIMAL(10, 4) NOT NULL,
+                description TEXT,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        
+        cursor.execute("""
+            INSERT INTO saas_rates (rate_type, price_per_unit, description)
+            VALUES 
+                ('per_view', 0.001, 'Price per single view'),
+                ('per_day_view', 0.05, 'Price per view per day'),
+                ('per_reaction', 0.002, 'Price per reaction'),
+                ('per_day_reaction', 0.08, 'Price per reaction per day')
+            ON CONFLICT (rate_type) DO NOTHING
+        """)
+        
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS promo_codes (
+                id SERIAL PRIMARY KEY,
+                code VARCHAR(50) UNIQUE NOT NULL,
+                discount_type VARCHAR(20) NOT NULL,
+                discount_value DECIMAL(10, 2) NOT NULL,
+                usage_limit INTEGER DEFAULT 0,
+                times_used INTEGER DEFAULT 0,
+                is_active BOOLEAN DEFAULT TRUE,
+                expires_at TIMESTAMP,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS saas_referrals (
+                id SERIAL PRIMARY KEY,
+                referrer_user_id BIGINT NOT NULL,
+                referred_user_id BIGINT NOT NULL,
+                referral_code VARCHAR(50) NOT NULL,
+                commission_rate DECIMAL(5, 4) DEFAULT 0.05,
+                total_earned DECIMAL(10, 2) DEFAULT 0.00,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (referrer_user_id) REFERENCES users(user_id) ON DELETE CASCADE,
+                FOREIGN KEY (referred_user_id) REFERENCES users(user_id) ON DELETE CASCADE
+            )
+        """)
+        
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS resellers (
+                id SERIAL PRIMARY KEY,
+                user_id BIGINT UNIQUE NOT NULL,
+                margin_percentage DECIMAL(5, 2) DEFAULT 10.00,
+                total_sales DECIMAL(10, 2) DEFAULT 0.00,
+                total_profit DECIMAL(10, 2) DEFAULT 0.00,
+                is_active BOOLEAN DEFAULT TRUE,
+                approved_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
+            )
+        """)
+        
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS account_usage_logs (
+                id SERIAL PRIMARY KEY,
+                account_id INTEGER NOT NULL,
+                order_id INTEGER NOT NULL,
+                channel_username VARCHAR(255),
+                action_type VARCHAR(50) NOT NULL,
+                success BOOLEAN DEFAULT TRUE,
+                error_message TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (account_id) REFERENCES sold_accounts(id) ON DELETE CASCADE,
+                FOREIGN KEY (order_id) REFERENCES saas_orders(id) ON DELETE CASCADE
+            )
+        """)
+        
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_saas_orders_user ON saas_orders(user_id)
+        """)
+        
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_saas_orders_status ON saas_orders(status)
+        """)
+        
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_account_usage_logs_account ON account_usage_logs(account_id)
+        """)
+        
         cursor.close()
         print("Database schema initialized successfully")
     
@@ -557,6 +665,156 @@ class Database:
                 (SELECT COUNT(*) FROM withdrawals WHERE requested_at >= NOW() - INTERVAL '24 hours') as new_withdrawals_24h,
                 (SELECT COALESCE(SUM(amount), 0) FROM withdrawals WHERE status = 'approved' AND processed_at >= NOW() - INTERVAL '24 hours') as withdrawn_24h
         """)
+        result = cursor.fetchone()
+        cursor.close()
+        return result
+    
+    def get_all_accounts(self, limit=50, offset=0):
+        cursor = self.connection.cursor()
+        cursor.execute("""
+            SELECT 
+                id,
+                phone_number,
+                account_status,
+                join_count,
+                max_joins,
+                is_banned,
+                is_full,
+                last_used,
+                created_at
+            FROM sold_accounts
+            ORDER BY created_at DESC
+            LIMIT %s OFFSET %s
+        """, (limit, offset))
+        results = cursor.fetchall()
+        cursor.close()
+        return results
+    
+    def get_account_pool_stats(self):
+        cursor = self.connection.cursor()
+        cursor.execute("""
+            SELECT 
+                COUNT(*) as total_accounts,
+                COUNT(CASE WHEN account_status = 'active' AND is_banned = FALSE AND is_full = FALSE THEN 1 END) as active_accounts,
+                COUNT(CASE WHEN is_banned = TRUE THEN 1 END) as banned_accounts,
+                COUNT(CASE WHEN is_full = TRUE THEN 1 END) as full_accounts
+            FROM sold_accounts
+        """)
+        result = cursor.fetchone()
+        cursor.close()
+        return result
+    
+    def add_account_manual(self, phone_number, session_string):
+        cursor = self.connection.cursor()
+        cursor.execute("""
+            INSERT INTO sold_accounts (seller_user_id, phone_number, session_string, account_status)
+            VALUES (0, %s, %s, 'active')
+            RETURNING id
+        """, (phone_number, session_string))
+        result = cursor.fetchone()
+        cursor.close()
+        return result['id'] if result else None
+    
+    def remove_account(self, account_id):
+        cursor = self.connection.cursor()
+        cursor.execute("DELETE FROM sold_accounts WHERE id = %s", (account_id,))
+        cursor.close()
+        return True
+    
+    def update_account_status(self, account_id, status, is_banned=None):
+        cursor = self.connection.cursor()
+        if is_banned is not None:
+            cursor.execute("""
+                UPDATE sold_accounts
+                SET account_status = %s, is_banned = %s, updated_at = CURRENT_TIMESTAMP
+                WHERE id = %s
+            """, (status, is_banned, account_id))
+        else:
+            cursor.execute("""
+                UPDATE sold_accounts
+                SET account_status = %s
+                WHERE id = %s
+            """, (status, account_id))
+        cursor.close()
+        return True
+    
+    def get_account_by_id(self, account_id):
+        cursor = self.connection.cursor()
+        cursor.execute("SELECT * FROM sold_accounts WHERE id = %s", (account_id,))
+        result = cursor.fetchone()
+        cursor.close()
+        return result
+    
+    def log_account_usage(self, account_id, order_id, channel_username, action_type, success=True, error_message=None):
+        cursor = self.connection.cursor()
+        cursor.execute("""
+            INSERT INTO account_usage_logs (account_id, order_id, channel_username, action_type, success, error_message)
+            VALUES (%s, %s, %s, %s, %s, %s)
+        """, (account_id, order_id, channel_username, action_type, success, error_message))
+        cursor.close()
+        return True
+    
+    def get_saas_rates(self):
+        cursor = self.connection.cursor()
+        cursor.execute("SELECT * FROM saas_rates ORDER BY id")
+        results = cursor.fetchall()
+        cursor.close()
+        return results
+    
+    def update_saas_rate(self, rate_type, price_per_unit):
+        cursor = self.connection.cursor()
+        cursor.execute("""
+            UPDATE saas_rates
+            SET price_per_unit = %s, updated_at = CURRENT_TIMESTAMP
+            WHERE rate_type = %s
+        """, (price_per_unit, rate_type))
+        cursor.close()
+        return True
+    
+    def create_saas_order(self, user_id, plan_type, duration, views_per_post, total_posts, channel_username, price, promo_code=None):
+        cursor = self.connection.cursor()
+        cursor.execute("""
+            INSERT INTO saas_orders (user_id, plan_type, duration, views_per_post, total_posts, channel_username, price, promo_code)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            RETURNING id
+        """, (user_id, plan_type, duration, views_per_post, total_posts, channel_username, price, promo_code))
+        result = cursor.fetchone()
+        cursor.close()
+        return result['id'] if result else None
+    
+    def get_user_orders(self, user_id, limit=10):
+        cursor = self.connection.cursor()
+        cursor.execute("""
+            SELECT * FROM saas_orders
+            WHERE user_id = %s
+            ORDER BY created_at DESC
+            LIMIT %s
+        """, (user_id, limit))
+        results = cursor.fetchall()
+        cursor.close()
+        return results
+    
+    def get_active_orders(self):
+        cursor = self.connection.cursor()
+        cursor.execute("""
+            SELECT * FROM saas_orders
+            WHERE status = 'active'
+            ORDER BY created_at ASC
+        """)
+        results = cursor.fetchall()
+        cursor.close()
+        return results
+    
+    def is_reseller(self, user_id):
+        cursor = self.connection.cursor()
+        cursor.execute("SELECT * FROM resellers WHERE user_id = %s AND is_active = TRUE", (user_id,))
+        result = cursor.fetchone()
+        cursor.close()
+        return result is not None
+    
+    def get_reseller_info(self, user_id):
+        cursor = self.connection.cursor()
+        cursor.execute("SELECT * FROM resellers WHERE user_id = %s", (user_id,))
         result = cursor.fetchone()
         cursor.close()
         return result
