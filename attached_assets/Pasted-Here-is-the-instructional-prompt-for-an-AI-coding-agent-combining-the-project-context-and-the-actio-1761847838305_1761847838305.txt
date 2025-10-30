@@ -1,0 +1,100 @@
+Here is the instructional prompt for an AI coding agent, combining the project context and the actionable steps for Phase 1.
+
+Instruction Prompt:
+
+You are an expert AI coding assistant. Your task is to help me build a complex, dual-function Telegram bot.
+
+Project Context
+What We Are Building
+We are creating a sophisticated Telegram bot that operates as a two-sided marketplace.
+
+
+Seller Side: The bot will automatically purchase Telegram accounts from users ("Sellers"). Users will be guided through a flow to submit their phone number and login codes, and upon successful session capture, they will be paid to an in-bot balance.
+
+
+
+
+
+Buyer (SaaS) Side: The bot will use this acquired pool of accounts to run a Software-as-a-Service (SaaS) business. "Buyers" can purchase plans to receive automated views and reactions on their channel posts, which will be delivered by the accounts we collected.
+
+
+
+Target Audience
+
+"Sellers": Telegram users who want to earn money by selling their accounts to the system.
+
+
+"Buyers": Telegram channel owners and administrators who want to purchase engagement (views, reactions). This also includes "Resellers".
+
+
+
+
+"Admins": The operators (us) who will manage the system, set prices, approve withdrawals, and monitor the account pool.
+
+
+
+Primary Goal
+The purpose is to create a fully automated business. We will buy a resource (Telegram accounts) and use it to sell a service (engagement). The bot must automate account acquisition, seller payouts, buyer payments, and service delivery.
+
+
+Your First Task: Phase 1 (Foundation & Core Bot Setup)
+Your objective is to build the project's technical foundation, database, and the basic bot framework for both "Seller" and "Buyer" functionalities. Please complete the following four tasks:
+
+1.1. Technology Stack and Environment Setup
+First, set up the core environment:
+
+
+Server: Prepare a VPS or server to host the bot and its backend workers.
+
+Database: Install and configure a database. This should be PostgreSQL or MongoDB.
+
+Bot Framework: Set up the Python environment. You must install a primary library like python-telegram-bot for handling commands. You must also install Telethon or Pyrogram for session management and client-side actions.
+
+
+1.2. Database Schema Implementation
+Next, create the initial database tables (or collections) based on this schema:
+
+
+Users: Must store all users (sellers and buyers). Include fields for seller_balance, buyer_wallet_balance, referral info, and status flags like is_banned and can_withdraw.
+
+
+Admins: Must manage admin users and their roles.
+
+
+Sold_Accounts: Must store session strings, phone numbers, and account status (e.g., active, banned, full), and join counts.
+
+
+Withdrawals: Must track seller payout requests, including amount, status, user_id, and method.
+
+1.3. Basic Bot Handlers and Registration
+Now, implement the bot's most basic functions:
+
+Initialize the bot with its API token.
+
+Implement the /start command handler.
+
+When a new user triggers /start, implement the logic to save them to the Users table.
+
+Implement a simple admin authentication mechanism (e.g., checking the user_id against the Admins table).
+
+1.4. Main "Seller" Menu Implementation
+Finally, create the primary user interface for the "Seller" functionality.
+
+Build the main menu structure for the bot.
+
+This menu must display the 5 main buttons for Sellers:
+
+
+Sell TG Account 
+
+
+Withdraw 
+
+
+Profile 
+
+
+Refer & Earn 
+
+
+Support
