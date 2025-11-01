@@ -1,0 +1,74 @@
+Instruction Prompt:
+
+You are an expert AI coding assistant. Your task is to help me build a complex, dual-function Telegram bot.
+
+Project Context
+What We Are Building
+We are creating a sophisticated Telegram bot that operates as a two-sided marketplace.
+
+Seller Side: The bot will automatically purchase Telegram accounts from users ("Sellers"). Users will be guided through a flow to submit their phone number and login codes, and upon successful session capture, they will be paid to an in-bot balance.
+
+Buyer (SaaS) Side: The bot will use this acquired pool of accounts to run a Software-as-a-Service (SaaS) business. "Buyers" can purchase plans to receive automated views and reactions on their channel posts, which will be delivered by the accounts we collected.
+
+Target Audience
+"Sellers": Telegram users who want to earn money by selling their accounts to the system.
+
+"Buyers": Telegram channel owners and administrators who want to purchase engagement (views, reactions). This also includes "Resellers".
+
+"Admins": The operators (us) who will manage the system, set prices, approve withdrawals, and monitor the account pool.
+
+Primary Goal
+The purpose is to create a fully automated business. We will buy a resource (Telegram accounts) and use it to sell a service (engagement). The bot must automate account acquisition, seller payouts, buyer payments, and service delivery.
+
+Your Next Task: Phase 7 (SaaS - Automated Payment Integration)
+Your objective is to automate the deposit system for buyers to add funds to their wallet and then use those funds to activate the plans created in Phase 6.
+
+Please complete the following four tasks:
+
+7.1. "Deposit" Menu Implementation
+First, implement the user interface for the "Deposit" button:
+
+When pressed, the bot must display buttons for all available deposit methods:
+
+UPI
+
+Paytm
+
+Crypto
+
+Binance
+
+You must also add the Apply Promo Code button to this menu.
+
+7.2. Payment Gateway Integration & Notifications
+Next, integrate the payment gateways to handle incoming funds:
+
+UPI (Manual/API): Implement the flow. Show the QR code/ID, ask the user to submit the UTR ID, and (if using an API like BharatPe) verify the transaction.
+
+Automated Gateways (Paytm/CryptoMus): Implement the API logic to generate an order link/invoice. You must also create a webhook endpoint to receive payment confirmation from the gateway's server.
+
+Credit Wallet: Upon successful verification from any gateway, you must add the deposited funds to the user's buyer_wallet_balance in the Users table.
+
+Notifications: Send a "Payment Received" message to the user and a "New Deposit" notification to the admin.
+
+7.3. Promo Code System (Admin & User)
+Implement the full promo code functionality:
+
+Admin Panel: Create a Promo Code Management section for admins to Create, Delete, and View Logs for all promo codes (using the Promo_Codes table).
+
+User Flow: Implement the Apply Promo Code button logic. The bot must check the code's validity and usage limit. If valid, add the bonus/credit amount directly to the user's buyer_wallet_balance.
+
+7.4. Automated Plan Activation Logic
+Finally, connect the wallet balance to plan activation. This task modifies the flow from Phase 6.4:
+
+After a user confirms a plan (which is in pending_payment status), the bot must immediately check if their buyer_wallet_balance is greater than or equal to the Plan_Price.
+
+If Yes (Sufficient Funds):
+
+Deduct the Plan_Price from their buyer_wallet_balance.
+
+Change the SaaS_Orders status from pending_payment to active.
+
+Send a "Plan Activated!" notification to the user.
+
+If No (Insufficient Funds): Send a message instructing the user to go to the Deposit menu to add funds.
