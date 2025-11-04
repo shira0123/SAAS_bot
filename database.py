@@ -136,6 +136,7 @@ class Database:
                 channel_id BIGINT,
                 status VARCHAR(20) DEFAULT 'active',
                 delivered_posts INTEGER DEFAULT 0,
+                delay_seconds INTEGER DEFAULT 10,
                 price DECIMAL(10, 2) NOT NULL,
                 promo_code VARCHAR(50),
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -1028,6 +1029,131 @@ class Database:
         results = cursor.fetchall()
         cursor.close()
         return results
+    
+    def get_available_accounts(self, limit=100):
+        """Get available accounts for service delivery (active, not banned, not full, joins < 500)"""
+        cursor = self.connection.cursor()
+        cursor.execute("""
+            SELECT id, phone_number, session_string, join_count, max_joins
+            FROM sold_accounts
+            WHERE account_status = 'active' 
+            AND is_banned = FALSE 
+            AND is_full = FALSE
+            AND join_count < 500
+            ORDER BY join_count ASC, last_used ASC NULLS FIRST
+            LIMIT %s
+        """, (limit,))
+        results = cursor.fetchall()
+        cursor.close()
+        return results
+    
+    def increment_account_join_count(self, account_id):
+        """Increment join_count when account joins a channel"""
+        cursor = self.connection.cursor()
+        cursor.execute("""
+            UPDATE sold_accounts
+            SET join_count = join_count + 1,
+                last_used = CURRENT_TIMESTAMP,
+                is_full = CASE WHEN join_count + 1 >= max_joins THEN TRUE ELSE FALSE END
+            WHERE id = %s
+            RETURNING join_count, is_full
+        """, (account_id,))
+        result = cursor.fetchone()
+        cursor.close()
+        return result
+    
+    def update_account_last_used(self, account_id):
+        """Update last_used timestamp for an account"""
+        cursor = self.connection.cursor()
+        cursor.execute("""
+            UPDATE sold_accounts
+            SET last_used = CURRENT_TIMESTAMP
+            WHERE id = %s
+        """, (account_id,))
+        cursor.close()
+        return True
+    
+    def increment_delivered_posts(self, order_id):
+        """Increment delivered_posts count for an order"""
+        cursor = self.connection.cursor()
+        cursor.execute("""
+            UPDATE saas_orders
+            SET delivered_posts = delivered_posts + 1
+            WHERE id = %s
+            RETURNING delivered_posts
+        """, (order_id,))
+        result = cursor.fetchone()
+        cursor.close()
+        return result['delivered_posts'] if result else 0
+    
+    def get_order_by_id(self, order_id):
+        """Get order details by ID"""
+        cursor = self.connection.cursor()
+        cursor.execute("SELECT * FROM saas_orders WHERE id = %s", (order_id,))
+        result = cursor.fetchone()
+        cursor.close()
+        return result
+    
+    def update_order_expiry(self, order_id, expires_at):
+        """Set expiration date for an order"""
+        cursor = self.connection.cursor()
+        cursor.execute("""
+            UPDATE saas_orders
+            SET expires_at = %s
+            WHERE id = %s
+        """, (expires_at, order_id))
+        cursor.close()
+        return True
+    
+    def get_expired_orders(self):
+        """Get orders that have expired"""
+        cursor = self.connection.cursor()
+        cursor.execute("""
+            SELECT * FROM saas_orders
+            WHERE status = 'active' 
+            AND expires_at IS NOT NULL 
+            AND expires_at < CURRENT_TIMESTAMP
+            ORDER BY expires_at ASC
+        """)
+        results = cursor.fetchall()
+        cursor.close()
+        return results
+    
+    def get_user_active_orders(self, user_id):
+        """Get active orders for a specific user"""
+        cursor = self.connection.cursor()
+        cursor.execute("""
+            SELECT * FROM saas_orders
+            WHERE user_id = %s AND status = 'active'
+            ORDER BY created_at DESC
+        """, (user_id,))
+        results = cursor.fetchall()
+        cursor.close()
+        return results
+    
+    def get_user_order_history(self, user_id, limit=20):
+        """Get order history for a user (completed/expired/cancelled orders)"""
+        cursor = self.connection.cursor()
+        cursor.execute("""
+            SELECT * FROM saas_orders
+            WHERE user_id = %s AND status IN ('completed', 'expired', 'cancelled')
+            ORDER BY created_at DESC
+            LIMIT %s
+        """, (user_id, limit))
+        results = cursor.fetchall()
+        cursor.close()
+        return results
+    
+    def update_order_delay(self, order_id, delay_seconds):
+        """Update delay_seconds for an order"""
+        cursor = self.connection.cursor()
+        cursor.execute("""
+            UPDATE saas_orders
+            SET delay_seconds = %s
+            WHERE id = %s
+        """, (delay_seconds, order_id))
+        cursor.close()
+        return True
     
     def close(self):
         if self.connection:

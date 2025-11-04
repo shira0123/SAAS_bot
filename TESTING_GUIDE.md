@@ -793,24 +793,217 @@ SELECT * FROM saas_rates;
 
 ---
 
+## Phase 8 Testing: Service Delivery Engine
+
+### Test 8.1: Service Delivery Worker - Channel Joining
+**Prerequisites**: Have at least one sold account in the database and one active order
+
+1. Run the service delivery worker: `python service_delivery_worker.py`
+2. Create an active order (complete purchase flow from Phase 6-7)
+3. ✅ **Expected**:
+   - Worker detects new active order
+   - Worker joins channel with required number of accounts
+   - Join count incremented in database
+   - Usage logs created for channel_join actions
+4. Check database: `SELECT * FROM account_usage_logs WHERE action_type = 'channel_join'`
+5. ✅ **Expected**: Logs show successful channel joins
+
+### Test 8.2: Service Delivery - View Delivery (Unlimited Plan)
+**Test Setup**: Create an unlimited_views plan
+
+1. Ensure service worker is running
+2. Post a new message to the target channel
+3. ✅ **Expected**:
+   - Worker detects new post
+   - Worker delivers views using available accounts
+   - Delay respected between each view delivery
+   - Usage logs created for view_delivery
+4. Check logs: `SELECT * FROM account_usage_logs WHERE action_type = 'view_delivery'`
+5. ✅ **Expected**: Number of views matches order's views_per_post setting
+
+### Test 8.3: Service Delivery - View Delivery (Limited Plan)
+**Test Setup**: Create a limited_views plan with total_posts=5
+
+1. Ensure service worker is running
+2. Post multiple messages to the target channel (more than the limit)
+3. ✅ **Expected**:
+   - First 5 posts receive view deliveries
+   - Posts after the 5th are ignored
+   - delivered_posts counter incremented to 5
+   - No more deliveries after limit reached
+4. Check database: `SELECT delivered_posts FROM saas_orders WHERE id = <order_id>`
+5. ✅ **Expected**: delivered_posts = 5 (matches total_posts)
+
+### Test 8.4: Service Delivery - Reaction Delivery
+**Test Setup**: Create an unlimited_reactions or limited_reactions plan
+
+1. Ensure service worker is running
+2. Post a new message to the target channel
+3. ✅ **Expected**:
+   - Worker delivers reactions using available accounts
+   - Different reactions used (👍, ❤️, 🔥, 👏, 😍)
+   - Delay respected between each reaction
+   - Usage logs created for reaction_delivery
+4. Check Telegram channel to see reactions appear
+5. ✅ **Expected**: Reactions visible on the post
+
+### Test 8.5: Plan Management - View My Plans
+1. As a buyer with active plans, click **📋 My Plans** button
+2. ✅ **Expected**: Display shows all active plans with:
+   - Plan type and ID
+   - Channel username
+   - Start date and expiry date
+   - Days left until expiry
+   - Progress (delivered/total posts)
+   - Current delay setting
+   - Price paid
+3. Each plan should have 4 buttons:
+   - 📊 View Details
+   - ⏱️ Change Delay
+   - 🔄 Renew Plan
+   - ❌ Cancel Plan
+
+### Test 8.6: Plan Management - View Plan Details
+1. In My Plans, click **📊 View Details** for a plan
+2. ✅ **Expected**: Detailed view shows:
+   - Complete plan information
+   - Timing details (started, expires, duration)
+   - Delivery settings (views per post, total posts, delivered, delay)
+   - Financial information (price, promo code if used)
+   - Current status
+3. Click **🔙 Back to Plans** to return
+
+### Test 8.7: Plan Management - Change Delay Time
+1. In My Plans, click **⏱️ Change Delay** for a plan
+2. ✅ **Expected**: Bot asks for new delay time (5-60 seconds)
+3. Send an invalid value (e.g., `100`)
+4. ✅ **Expected**: Error message, asks again
+5. Send a valid value (e.g., `15`)
+6. ✅ **Expected**:
+   - Confirmation message
+   - Delay updated in database
+   - Future deliveries use new delay
+7. Check database: `SELECT delay_seconds FROM saas_orders WHERE id = <order_id>`
+8. ✅ **Expected**: delay_seconds = 15
+
+### Test 8.8: Plan Management - Cancel Plan
+1. In My Plans, click **❌ Cancel Plan** for a plan
+2. ✅ **Expected**: Confirmation prompt appears
+3. Click **❌ No, Keep It**
+4. ✅ **Expected**: Returns without canceling
+5. Click **❌ Cancel Plan** again
+6. Click **✅ Yes, Cancel**
+7. ✅ **Expected**:
+   - Plan status updated to 'cancelled'
+   - Confirmation message shown
+   - Plan removed from active plans list
+8. Check database: `SELECT status FROM saas_orders WHERE id = <order_id>`
+9. ✅ **Expected**: status = 'cancelled'
+
+### Test 8.9: Plan History
+1. Cancel or wait for a plan to expire
+2. Click **📊 Plan History** button
+3. ✅ **Expected**: Display shows all completed/expired/cancelled plans with:
+   - Plan type and ID
+   - Channel username
+   - Start date
+   - Price
+   - Status emoji (✅ completed, ⏰ expired, ❌ cancelled)
+
+### Test 8.10: Expiry Handler - Reminder Notifications
+**Test Setup**: Create a plan that expires in 3 days
+
+1. Run the expiry handler: `python plan_expiry_handler.py`
+2. Wait for expiry check cycle (or set expiry to be imminent for testing)
+3. ✅ **Expected**: User receives notification:
+   - At 3 days before expiry
+   - At 1 day before expiry
+   - On expiry day
+4. Each notification should include:
+   - Plan details
+   - Days until expiry
+   - Grace period information
+   - Renewal instructions
+
+### Test 8.11: Expiry Handler - Auto-Leave After Grace Period
+**Test Setup**: Create a plan and let it expire with 3+ days grace period
+
+1. Ensure expiry handler is running
+2. Wait for plan to expire + 3 days (or adjust expiry for testing)
+3. ✅ **Expected**:
+   - Worker makes all accounts leave the channel
+   - join_count decremented for each account
+   - Order status changed to 'expired'
+   - Usage logs created for channel_leave actions
+   - User receives final expiry notification
+4. Check database: `SELECT status FROM saas_orders WHERE id = <order_id>`
+5. ✅ **Expected**: status = 'expired'
+6. Check logs: `SELECT * FROM account_usage_logs WHERE action_type = 'channel_leave' AND order_id = <order_id>`
+7. ✅ **Expected**: Leave logs for all accounts that joined
+
+### Test 8.12: Integration Test - Complete Flow
+**Full end-to-end test of Phase 8**
+
+1. Seller sells an account (Phases 1-2)
+2. Buyer deposits money (Phase 7)
+3. Buyer purchases an unlimited_views plan (Phase 6)
+4. Plan automatically activates (Phase 7)
+5. Service worker joins channel with accounts (Phase 8.1)
+6. Post a message to the channel
+7. ✅ **Expected**: Views delivered automatically (Phase 8.2)
+8. Buyer checks "My Plans" to see delivery progress (Phase 8.3)
+9. Buyer changes delay time (Phase 8.3)
+10. Post another message
+11. ✅ **Expected**: Views delivered with new delay
+12. Buyer receives expiry reminders (Phase 8.4)
+13. Plan expires and enters grace period
+14. After grace period, accounts automatically leave (Phase 8.4)
+
+### Phase 8 Verification Checklist ✅
+- [ ] Service delivery worker starts without errors
+- [ ] Worker detects and processes active orders
+- [ ] Channel joining works for public channels
+- [ ] Channel joining handles private channels
+- [ ] View delivery works for unlimited plans
+- [ ] View delivery works for limited plans with quota
+- [ ] Reaction delivery works
+- [ ] Delay settings are respected
+- [ ] Account usage logs are created
+- [ ] My Plans button shows all active plans
+- [ ] Plan details view shows complete information
+- [ ] Delay change flow works with validation
+- [ ] Plan cancellation works with confirmation
+- [ ] Plan History shows completed/expired/cancelled plans
+- [ ] Expiry reminders sent at correct intervals (3 days, 1 day, on expiry)
+- [ ] Auto-leave works after grace period
+- [ ] Join counts properly managed (incremented/decremented)
+- [ ] Order status updates work (active → expired/cancelled)
+- [ ] Database tables updated correctly
+- [ ] delay_seconds field added to saas_orders table
+
+---
+
 ## Next Steps / Known Limitations
 
 ### Working Features ✅
-- Complete Phase 1-5 seller side functionality
-- Complete Phase 1-5 buyer side UI (informational)
+- Complete Phase 1-8 seller side functionality
+- Complete Phase 1-8 buyer side functionality
+- Automated service delivery (views/reactions to channels)
+- Payment integration with UPI and promo codes
+- Promo code management for admins
+- Plan management interface for buyers
+- Automated expiry handling and notifications
 - Referral system for both sellers and buyers
 - Admin controls and reporting
 - Account pool management
 
 ### Not Yet Implemented ⚠️
-- **Actual service delivery** (views/reactions to channels)
-- **Payment integration** for buyer deposits
-- **Promo code management UI** for admins
 - **Reseller approval workflow**
-- **Real-time delivery monitoring**
-- **Order processing automation**
+- **Advanced analytics dashboard**
+- **Additional payment methods** (Paytm, Crypto, Binance Pay)
+- **Plan renewal automation**
 
-These features are planned for future phases (Phase 6+).
+These features are planned for future phases (Phase 9+).
 
 ---
 
