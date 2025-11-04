@@ -25,6 +25,7 @@ import buy_plan
 import deposit_menu
 import promo_code_management
 import admin_deposit_management
+import plan_management
 
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -206,9 +207,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif text == "💰 Deposit":
         await buyer_menu.deposit(update, context)
     elif text == "📋 My Plans":
-        await buyer_menu.my_plans(update, context)
+        await plan_management.show_my_plans(update, context)
     elif text == "📊 Plan History":
-        await buyer_menu.plan_history(update, context)
+        await plan_management.show_plan_history(update, context)
     elif text == "🎁 Referral Program":
         await buyer_menu.buyer_referral(update, context)
     elif text == "👔 Reseller Panel":
@@ -287,6 +288,7 @@ def main():
     application.add_handler(admin_rate_management.get_rate_management_handler())
     application.add_handler(deposit_menu.get_deposit_handler())
     application.add_handler(promo_code_management.get_promo_management_handler())
+    application.add_handler(plan_management.get_plan_management_handler())
     
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("setprice", setprice))
@@ -313,6 +315,11 @@ def main():
     
     application.add_handler(CallbackQueryHandler(admin_rate_management.show_rate_management, pattern="^show_rates$"))
     application.add_handler(CallbackQueryHandler(buy_plan.show_plan_types, pattern="^buyer_back$"))
+    
+    application.add_handler(CallbackQueryHandler(plan_management.view_plan_details, pattern="^plan_view_"))
+    application.add_handler(CallbackQueryHandler(plan_management.renew_plan, pattern="^plan_renew_"))
+    application.add_handler(CallbackQueryHandler(plan_management.cancel_plan, pattern="^plan_cancel_"))
+    application.add_handler(CallbackQueryHandler(plan_management.confirm_cancel_plan, pattern="^confirm_cancel_"))
     
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     

@@ -327,7 +327,17 @@ Implement "My Plans" button for buyers with sub-buttons:
 - `plan_management.py` - User plan management interface
 - `plan_expiry_handler.py` - Expiry checks and auto-leave logic
 
-## User Preferences
+## Development Rules & Preferences
+
+### Mandatory Rules
+1. **Always Update TESTING_GUIDE.md**: When implementing any new phase or major feature:
+   - Add comprehensive test cases to TESTING_GUIDE.md
+   - Include step-by-step testing instructions
+   - Add a verification checklist for the phase
+   - Update the "Working Features" section to reflect new functionality
+   - Update the "Not Yet Implemented" section to remove completed features
+
+### User Preferences
 - Clean, modular code structure
 - Comprehensive database schema
 - Interactive menu-based interface
