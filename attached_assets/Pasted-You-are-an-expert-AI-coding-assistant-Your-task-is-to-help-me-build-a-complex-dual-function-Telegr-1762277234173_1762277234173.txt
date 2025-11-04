@@ -1,0 +1,107 @@
+You are an expert AI coding assistant. Your task is to help me build a complex, dual-function Telegram bot.
+
+Project Context
+What We Are Building
+We are creating a sophisticated Telegram bot that operates as a two-sided marketplace.
+
+Seller Side: The bot will automatically purchase Telegram accounts from users ("Sellers"). Users will be guided through a flow to submit their phone number and login codes, and upon successful session capture, they will be paid to an in-bot balance .
+
+
+
+
+
+Buyer (SaaS) Side: The bot will use this acquired pool of accounts to run a Software-as-a-Service (SaaS) business. "Buyers" can purchase plans to receive automated views and reactions on their channel posts, which will be delivered by the accounts we collected .
+
+
+
+
+
+Target Audience
+
+"Sellers": Telegram users who want to earn money by selling their accounts to the system.
+
+
+
+"Buyers": Telegram channel owners and administrators who want to purchase engagement (views, reactions). This also includes "Resellers".
+
+
+
+
+"Admins": The operators (us) who will manage the system, set prices, approve withdrawals, and monitor the account pool.
+
+
+
+Primary Goal
+The purpose is to create a fully automated business. We will buy a resource (Telegram accounts) and use it to sell a service (engagement). The bot must automate account acquisition, seller payouts, buyer payments, and service delivery.
+
+
+
+Your Next Task: Phase 8 (SaaS - Service Delivery Engine)
+Your objective is to build the core backend worker that delivers views and reactions to active plans using the account pool. This is the main engine of the SaaS.
+
+Please complete the following four tasks:
+
+8.1. Core Worker & Channel Joining
+First, create the main backend process and the logic for joining channels:
+
+Delivery Worker: Create a separate, continuously running script (a "worker"). This script must scan the SaaS_Orders table for all plans with status: active.
+
+
+Channel Join Logic: When a new plan becomes active, the worker must get the channel link.
+
+It must select available accounts from the Sold_Accounts pool (those with status: active and joins < 500).
+
+
+Public Channel: Use Telethon/Pyrogram to make the selected accounts join the channel.
+
+
+Private Channel: Use the accounts to send a join request.
+
+Update the Joined Channels count for each account in the database.
+
+8.2. Service Delivery Logic
+Next, implement the logic for delivering the actual services:
+
+
+Monitor for New Posts: The worker must monitor all target channels (from active plans) for new posts.
+
+
+Unlimited Plans: When a new post appears in a channel with an "Unlimited" plan, trigger the required number of accounts (e.g., 100) to send views/reactions, respecting the plan's Delay.
+
+
+Limited Plans: When a new post appears, check the Daily Posts quota for that plan. If the quota is not met, deliver the views/reactions, increment the day's post count for that order, and respect the Delay . If the quota is met, ignore the post.
+
+
+
+Log Deliveries: Log all successful deliveries in the Account Usage Logs.
+
+8.3. User-Facing Plan Management
+Implement the "My Plans" button for buyers:
+
+This button should allow users to manage their active plans.
+
+Implement the following sub-buttons:
+
+View Current Plan Usage
+
+Change Delay Time
+
+Renew Plan
+
+Cancel Plan
+
+8.4. Plan Expiry & Auto-Leave
+Finally, implement the logic for handling plan completion and expiry:
+
+
+Plan History: Implement the Plan History button to list expired/completed plans.
+
+
+Scheduled Job: Create a scheduled job to check for expired plans.
+
+
+Auto-Leave Logic: Implement the 3-day grace period. If the plan is not renewed after 3 days, trigger the worker to make all associated accounts leave that user's channel.
+
+
+
+Notifications: Send plan expiry reminders to the user (e.g., 3 days before, 1 day before, and on the expiry date).
