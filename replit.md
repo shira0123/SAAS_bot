@@ -1,9 +1,46 @@
-# Telegram Marketplace Bot - Phases 1-5 Complete
+# Telegram Marketplace Bot - Phases 1-7 Complete
+
+## 🚀 Quick Start for AI Agents
+
+### Environment Setup (Replit)
+This project runs on Replit with the following configuration:
+- **Language**: Python 3.11 (managed via Nix/uv)
+- **Database**: PostgreSQL (provisioned via Replit database tools)
+- **Package Manager**: uv (pyproject.toml for dependencies)
+- **Workflow**: `telegram-bot` runs `python bot.py` in console mode
+
+### Critical Setup Steps (Already Complete ✅)
+1. ✅ PostgreSQL database created and connected
+2. ✅ All dependencies installed via uv (python-telegram-bot, telethon, psycopg2-binary, etc.)
+3. ✅ Database schema initialized (11 tables)
+4. ✅ Workflow configured to run bot.py
+
+### Required Secrets (User Must Add)
+The bot requires these environment variables to run:
+- `BOT_TOKEN` - Telegram Bot API token (from @BotFather)
+- `TELEGRAM_API_ID` - Telegram API ID (from my.telegram.org)
+- `TELEGRAM_API_HASH` - Telegram API hash (from my.telegram.org)
+- `ADMIN_IDS` - Comma-separated list of admin Telegram user IDs
+
+**Status**: ⚠️ Secrets not yet configured by user. Bot will show error until secrets are added.
+
+### How to Work on This Project
+1. **Check secrets**: Use `check_secrets` tool to verify required secrets exist
+2. **Run the bot**: Workflow auto-restarts on changes, or use `restart_workflow("telegram-bot")`
+3. **Check logs**: Use `refresh_all_logs` to see bot console output and errors
+4. **Database operations**: Use `database.py` methods or `execute_sql_tool` for queries
+5. **Add packages**: Use `packager_tool` with language="python" (updates pyproject.toml automatically)
+
+### File Structure Rules
+- **bot.py**: Main entry point, registers all handlers
+- **database.py**: All database schema and operations (single source of truth)
+- **Feature modules**: Each feature in separate file (account_seller.py, buyer_menu.py, etc.)
+- **Never modify**: pyproject.toml manually (use packager_tool instead)
 
 ## Project Overview
 A sophisticated dual-function Telegram bot that operates as a two-sided marketplace:
 - **Seller Side**: Automated purchasing of Telegram accounts from users (✅ Phases 1-4 Complete)
-- **Buyer Side**: SaaS platform for delivering automated views and reactions to channel posts (✅ Phase 5 UI Complete)
+- **Buyer Side**: SaaS platform for delivering automated views and reactions to channel posts (✅ Phases 5-7 Complete)
 - **Admin Tools**: Complete account pool management and reporting system (✅ Phase 5 Complete)
 
 ## Current Implementation (Phases 1-5)
@@ -242,12 +279,53 @@ A sophisticated dual-function Telegram bot that operates as a two-sided marketpl
 - `promo_code_management.py` (285 lines) - admin promo management
 - `admin_deposit_management.py` (145 lines) - deposit verification & plan activation
 
-### Next Phase Features (Phase 8+)
-- Automated engagement delivery engine
-- Service delivery automation (views, reactions to channels)
-- Real-time delivery monitoring dashboard
-- Reseller approval workflow
-- Advanced analytics and reporting
+### Next Phase: Phase 8 - Service Delivery Engine (🔄 In Progress)
+
+**Objective**: Build the core backend worker that delivers views and reactions to active plans using the account pool.
+
+**Requirements**:
+
+#### 8.1 Core Worker & Channel Joining
+- **Delivery Worker**: Separate continuously running script that scans `saas_orders` table for `status: active` plans
+- **Channel Join Logic**: 
+  - When plan becomes active, get channel link from order
+  - Select available accounts from `sold_accounts` pool (status: active, joins < 500)
+  - **Public Channels**: Use Telethon/Pyrogram to join channel
+  - **Private Channels**: Send join request via accounts
+  - Update `joined_channels` count for each account in database
+  
+#### 8.2 Service Delivery Logic
+- **Monitor for New Posts**: Worker monitors all target channels (from active plans)
+- **Unlimited Plans**: 
+  - On new post → trigger required number of accounts (e.g., 100)
+  - Send views/reactions respecting plan's `delay` setting
+- **Limited Plans**:
+  - On new post → check `daily_posts` quota for that plan
+  - If quota not met → deliver views/reactions, increment day's post count
+  - If quota met → ignore the post
+  - Respect `delay` setting
+- **Log Deliveries**: Log all successful deliveries in `account_usage_logs` table
+
+#### 8.3 User-Facing Plan Management
+Implement "My Plans" button for buyers with sub-buttons:
+- View Current Plan Usage
+- Change Delay Time
+- Renew Plan
+- Cancel Plan
+
+#### 8.4 Plan Expiry & Auto-Leave
+- **Plan History**: Implement button to list expired/completed plans
+- **Scheduled Job**: Check for expired plans regularly
+- **Auto-Leave Logic**: 
+  - 3-day grace period after expiry
+  - If not renewed → make all associated accounts leave the channel
+- **Notifications**: 
+  - Send expiry reminders (3 days before, 1 day before, on expiry date)
+
+**Files to Create**:
+- `service_delivery_worker.py` - Main delivery engine
+- `plan_management.py` - User plan management interface
+- `plan_expiry_handler.py` - Expiry checks and auto-leave logic
 
 ## User Preferences
 - Clean, modular code structure
@@ -256,6 +334,16 @@ A sophisticated dual-function Telegram bot that operates as a two-sided marketpl
 - Secure session and secret management
 
 ## Recent Changes
+- 2025-11-04: **Project Import to Replit Complete** ✅
+  - Successfully migrated project from external environment to Replit
+  - Created PostgreSQL database with all environment variables configured
+  - Installed all Python dependencies via uv package manager (python-telegram-bot, telethon, psycopg2-binary, python-dotenv, schedule)
+  - Resolved package conflicts (removed conflicting "telegram" package that blocked python-telegram-bot)
+  - Configured workflow to run `python bot.py` in console mode
+  - Verified database connection and schema initialization
+  - Bot ready to run once user adds required secrets (BOT_TOKEN, TELEGRAM_API_ID, TELEGRAM_API_HASH, ADMIN_IDS)
+  - Added comprehensive AI agent documentation in replit.md for future development
+  - Ready for Phase 8 implementation (Service Delivery Engine)
 - 2025-11-01: **Phase 7 Implementation Complete** - Automated Payment Integration
   - Implemented complete deposit system with UPI, Paytm, Crypto, Binance options
   - Built promo code management system for admins
