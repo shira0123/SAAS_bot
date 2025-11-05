@@ -1,0 +1,74 @@
+Instruction Prompt:
+
+You are an expert AI coding assistant. Your task is to help me build a complex, dual-function Telegram bot.
+
+Project Context
+What We Are Building
+We are creating a sophisticated Telegram bot that operates as a two-sided marketplace.
+
+Seller Side: The bot will automatically purchase Telegram accounts from users ("Sellers"). Users will be guided through a flow to submit their phone number and login codes, and upon successful session capture, they will be paid to an in-bot balance.
+
+Buyer (SaaS) Side: The bot will use this acquired pool of accounts to run a Software-as-a-Service (SaaS) business. "Buyers" can purchase plans to receive automated views and reactions on their channel posts, which will be delivered by the accounts we collected.
+
+Target Audience
+"Sellers": Telegram users who want to earn money by selling their accounts to the system.
+
+"Buyers": Telegram channel owners and administrators who want to purchase engagement (views, reactions). This also includes "Resellers".
+
+"Admins": The operators (us) who will manage the system, set prices, approve withdrawals, and monitor the account pool.
+
+Primary Goal
+The purpose is to create a fully automated business. We will buy a resource (Telegram accounts) and use it to sell a service (engagement). The bot must automate account acquisition, seller payouts, buyer payments, and service delivery.
+
+Your Next Task: Phase 9 (SaaS - Advanced Buyer Features)
+Your objective is to build the value-add programs for buyers to drive growth. This includes implementing a separate referral program for buyers and a complete reseller panel.
+
+Please complete the following four tasks:
+
+9.1. SaaS Referral Program (Buyer Side)
+First, implement the "Referral Program" button for buyers:
+
+This menu must display the following options: Refer & Earn (to get their link), Withdraw Referral Earnings, Referral Logs, and Update Wallet Info.
+
+Commission Logic: Implement the logic so that when a referred user successfully buys a plan, a percentage commission is credited to the referrer's referral balance (use the SaaS_Referrals table).
+
+Admin Control: Implement an admin section for Referral Management (view logs, set commission %, see top referrals).
+
+9.2. Buyer Referral Withdrawal System
+Create a separate withdrawal system for the buyer referral earnings:
+
+This system must be distinct from the seller's withdrawal flow.
+
+Implement the Withdraw Referral Earnings button flow for the buyer.
+
+Implement a manual approval flow for the admin to process these specific withdrawal requests (this can be part of the Referral Management panel).
+
+9.3. Admin: Reseller Management
+Next, build the backend controls for the Reseller program:
+
+Implement a Reseller Management panel for admins.
+
+This panel must allow admins to:
+
+Approve Requests (to become a reseller).
+
+View Resellers.
+
+View Commission Summary.
+
+Manage reseller Withdraw Requests.
+
+9.4. Reseller Panel (User Side)
+Finally, implement the "Reseller Panel" button for approved resellers:
+
+This menu should be visible only to users marked as resellers in the Resellers table.
+
+Implement the following buttons for the reseller:
+
+Create Custom Plan Link: A flow that generates a plan link with the reseller's custom margin.
+
+View Sales/Commission: To track their sales.
+
+Set Custom Margin: To define their profit margin.
+
+Withdraw Commission: This will trigger another manual admin approval flow for reseller payouts.
