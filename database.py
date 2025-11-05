@@ -31,12 +31,15 @@ class Database:
                 last_name VARCHAR(255),
                 seller_balance DECIMAL(10, 2) DEFAULT 0.00,
                 buyer_wallet_balance DECIMAL(10, 2) DEFAULT 0.00,
+                buyer_referral_balance DECIMAL(10, 2) DEFAULT 0.00,
                 referral_code VARCHAR(50) UNIQUE,
                 referred_by BIGINT,
                 referral_earnings DECIMAL(10, 2) DEFAULT 0.00,
                 total_withdrawn DECIMAL(10, 2) DEFAULT 0.00,
                 payout_method VARCHAR(100),
                 payout_details TEXT,
+                buyer_wallet_method VARCHAR(100),
+                buyer_wallet_details TEXT,
                 is_banned BOOLEAN DEFAULT FALSE,
                 can_withdraw BOOLEAN DEFAULT TRUE,
                 user_type VARCHAR(20) DEFAULT 'seller',
@@ -262,6 +265,71 @@ class Database:
         
         cursor.execute("""
             CREATE INDEX IF NOT EXISTS idx_account_usage_logs_account ON account_usage_logs(account_id)
+        """)
+        
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS buyer_referral_withdrawals (
+                id SERIAL PRIMARY KEY,
+                user_id BIGINT NOT NULL,
+                amount DECIMAL(10, 2) NOT NULL,
+                wallet_method VARCHAR(100) NOT NULL,
+                wallet_details TEXT NOT NULL,
+                status VARCHAR(20) DEFAULT 'pending',
+                admin_notes TEXT,
+                requested_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                processed_at TIMESTAMP,
+                processed_by BIGINT,
+                FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE,
+                FOREIGN KEY (processed_by) REFERENCES admins(user_id) ON DELETE SET NULL
+            )
+        """)
+        
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS reseller_withdrawals (
+                id SERIAL PRIMARY KEY,
+                reseller_id INTEGER NOT NULL,
+                user_id BIGINT NOT NULL,
+                amount DECIMAL(10, 2) NOT NULL,
+                payout_method VARCHAR(100) NOT NULL,
+                payout_details TEXT NOT NULL,
+                status VARCHAR(20) DEFAULT 'pending',
+                admin_notes TEXT,
+                requested_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                processed_at TIMESTAMP,
+                processed_by BIGINT,
+                FOREIGN KEY (reseller_id) REFERENCES resellers(id) ON DELETE CASCADE,
+                FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE,
+                FOREIGN KEY (processed_by) REFERENCES admins(user_id) ON DELETE SET NULL
+            )
+        """)
+        
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS buyer_referral_earnings (
+                id SERIAL PRIMARY KEY,
+                referrer_user_id BIGINT NOT NULL,
+                referred_user_id BIGINT NOT NULL,
+                order_id INTEGER NOT NULL,
+                commission_amount DECIMAL(10, 2) NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (referrer_user_id) REFERENCES users(user_id) ON DELETE CASCADE,
+                FOREIGN KEY (referred_user_id) REFERENCES users(user_id) ON DELETE CASCADE,
+                FOREIGN KEY (order_id) REFERENCES saas_orders(id) ON DELETE CASCADE
+            )
+        """)
+        
+        cursor.execute("""
+            DO $$
+            BEGIN
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='users' AND column_name='buyer_referral_balance') THEN
+                    ALTER TABLE users ADD COLUMN buyer_referral_balance DECIMAL(10, 2) DEFAULT 0.00;
+                END IF;
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='users' AND column_name='buyer_wallet_method') THEN
+                    ALTER TABLE users ADD COLUMN buyer_wallet_method VARCHAR(100);
+                END IF;
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='users' AND column_name='buyer_wallet_details') THEN
+                    ALTER TABLE users ADD COLUMN buyer_wallet_details TEXT;
+                END IF;
+            END $$
         """)
         
         cursor.close()
@@ -1154,6 +1222,297 @@ class Database:
         """, (delay_seconds, order_id))
         cursor.close()
         return True
+    
+    def create_buyer_referral_earning(self, referrer_user_id, referred_user_id, order_id, commission_amount):
+        """Record buyer referral earning"""
+        cursor = self.connection.cursor()
+        cursor.execute("""
+            INSERT INTO buyer_referral_earnings (referrer_user_id, referred_user_id, order_id, commission_amount)
+            VALUES (%s, %s, %s, %s)
+            RETURNING *
+        """, (referrer_user_id, referred_user_id, order_id, commission_amount))
+        result = cursor.fetchone()
+        cursor.execute("""
+            UPDATE users
+            SET buyer_referral_balance = buyer_referral_balance + %s
+            WHERE user_id = %s
+        """, (commission_amount, referrer_user_id))
+        cursor.close()
+        return result
+    
+    def get_buyer_referral_earnings(self, user_id, limit=20):
+        """Get buyer referral earnings for a user"""
+        cursor = self.connection.cursor()
+        cursor.execute("""
+            SELECT bre.*, u.username as referred_username, so.plan_type, so.price
+            FROM buyer_referral_earnings bre
+            JOIN users u ON bre.referred_user_id = u.user_id
+            JOIN saas_orders so ON bre.order_id = so.id
+            WHERE bre.referrer_user_id = %s
+            ORDER BY bre.created_at DESC
+            LIMIT %s
+        """, (user_id, limit))
+        results = cursor.fetchall()
+        cursor.close()
+        return results
+    
+    def create_buyer_referral_withdrawal(self, user_id, amount, wallet_method, wallet_details):
+        """Create buyer referral withdrawal request"""
+        cursor = self.connection.cursor()
+        cursor.execute("""
+            INSERT INTO buyer_referral_withdrawals (user_id, amount, wallet_method, wallet_details)
+            VALUES (%s, %s, %s, %s)
+            RETURNING *
+        """, (user_id, amount, wallet_method, wallet_details))
+        result = cursor.fetchone()
+        cursor.close()
+        return result
+    
+    def get_pending_buyer_referral_withdrawals(self):
+        """Get all pending buyer referral withdrawal requests"""
+        cursor = self.connection.cursor()
+        cursor.execute("""
+            SELECT brw.*, u.username, u.first_name
+            FROM buyer_referral_withdrawals brw
+            JOIN users u ON brw.user_id = u.user_id
+            WHERE brw.status = 'pending'
+            ORDER BY brw.requested_at ASC
+        """)
+        results = cursor.fetchall()
+        cursor.close()
+        return results
+    
+    def approve_buyer_referral_withdrawal(self, withdrawal_id, admin_id, notes=None):
+        """Approve buyer referral withdrawal"""
+        cursor = self.connection.cursor()
+        cursor.execute("""
+            UPDATE buyer_referral_withdrawals
+            SET status = 'approved', processed_at = CURRENT_TIMESTAMP, 
+                processed_by = %s, admin_notes = %s
+            WHERE id = %s
+            RETURNING user_id, amount
+        """, (admin_id, notes, withdrawal_id))
+        result = cursor.fetchone()
+        if result:
+            cursor.execute("""
+                UPDATE users
+                SET buyer_referral_balance = buyer_referral_balance - %s
+                WHERE user_id = %s
+            """, (result['amount'], result['user_id']))
+        cursor.close()
+        return result
+    
+    def reject_buyer_referral_withdrawal(self, withdrawal_id, admin_id, notes=None):
+        """Reject buyer referral withdrawal"""
+        cursor = self.connection.cursor()
+        cursor.execute("""
+            UPDATE buyer_referral_withdrawals
+            SET status = 'rejected', processed_at = CURRENT_TIMESTAMP,
+                processed_by = %s, admin_notes = %s
+            WHERE id = %s
+            RETURNING *
+        """, (admin_id, notes, withdrawal_id))
+        result = cursor.fetchone()
+        cursor.close()
+        return result
+    
+    def is_reseller(self, user_id):
+        """Check if user is an active reseller"""
+        cursor = self.connection.cursor()
+        cursor.execute("""
+            SELECT * FROM resellers
+            WHERE user_id = %s AND is_active = TRUE
+        """, (user_id,))
+        result = cursor.fetchone()
+        cursor.close()
+        return result is not None
+    
+    def get_reseller_info(self, user_id):
+        """Get reseller information"""
+        cursor = self.connection.cursor()
+        cursor.execute("""
+            SELECT * FROM resellers
+            WHERE user_id = %s
+        """, (user_id,))
+        result = cursor.fetchone()
+        cursor.close()
+        return result
+    
+    def update_reseller_margin(self, user_id, margin_percentage):
+        """Update reseller margin percentage"""
+        cursor = self.connection.cursor()
+        cursor.execute("""
+            UPDATE resellers
+            SET margin_percentage = %s
+            WHERE user_id = %s
+            RETURNING *
+        """, (margin_percentage, user_id))
+        result = cursor.fetchone()
+        cursor.close()
+        return result
+    
+    def create_reseller_withdrawal(self, user_id, amount, payout_method, payout_details):
+        """Create reseller withdrawal request"""
+        cursor = self.connection.cursor()
+        cursor.execute("""
+            SELECT id FROM resellers WHERE user_id = %s
+        """, (user_id,))
+        reseller = cursor.fetchone()
+        if not reseller:
+            cursor.close()
+            return None
+        cursor.execute("""
+            INSERT INTO reseller_withdrawals (reseller_id, user_id, amount, payout_method, payout_details)
+            VALUES (%s, %s, %s, %s, %s)
+            RETURNING *
+        """, (reseller['id'], user_id, amount, payout_method, payout_details))
+        result = cursor.fetchone()
+        cursor.close()
+        return result
+    
+    def get_pending_reseller_withdrawals(self):
+        """Get all pending reseller withdrawal requests"""
+        cursor = self.connection.cursor()
+        cursor.execute("""
+            SELECT rw.*, u.username, u.first_name, r.margin_percentage
+            FROM reseller_withdrawals rw
+            JOIN users u ON rw.user_id = u.user_id
+            JOIN resellers r ON rw.reseller_id = r.id
+            WHERE rw.status = 'pending'
+            ORDER BY rw.requested_at ASC
+        """)
+        results = cursor.fetchall()
+        cursor.close()
+        return results
+    
+    def approve_reseller_withdrawal(self, withdrawal_id, admin_id, notes=None):
+        """Approve reseller withdrawal"""
+        cursor = self.connection.cursor()
+        cursor.execute("""
+            UPDATE reseller_withdrawals
+            SET status = 'approved', processed_at = CURRENT_TIMESTAMP,
+                processed_by = %s, admin_notes = %s
+            WHERE id = %s
+            RETURNING user_id, amount, reseller_id
+        """, (admin_id, notes, withdrawal_id))
+        result = cursor.fetchone()
+        if result:
+            cursor.execute("""
+                UPDATE resellers
+                SET total_profit = total_profit - %s
+                WHERE id = %s
+            """, (result['amount'], result['reseller_id']))
+        cursor.close()
+        return result
+    
+    def reject_reseller_withdrawal(self, withdrawal_id, admin_id, notes=None):
+        """Reject reseller withdrawal"""
+        cursor = self.connection.cursor()
+        cursor.execute("""
+            UPDATE reseller_withdrawals
+            SET status = 'rejected', processed_at = CURRENT_TIMESTAMP,
+                processed_by = %s, admin_notes = %s
+            WHERE id = %s
+            RETURNING *
+        """, (admin_id, notes, withdrawal_id))
+        result = cursor.fetchone()
+        cursor.close()
+        return result
+    
+    def get_all_resellers(self, active_only=False):
+        """Get all resellers"""
+        cursor = self.connection.cursor()
+        query = """
+            SELECT r.*, u.username, u.first_name, u.created_at as user_created_at
+            FROM resellers r
+            JOIN users u ON r.user_id = u.user_id
+        """
+        if active_only:
+            query += " WHERE r.is_active = TRUE"
+        query += " ORDER BY r.total_sales DESC"
+        cursor.execute(query)
+        results = cursor.fetchall()
+        cursor.close()
+        return results
+    
+    def approve_reseller_application(self, user_id, admin_id):
+        """Approve user as reseller"""
+        cursor = self.connection.cursor()
+        cursor.execute("""
+            INSERT INTO resellers (user_id, is_active)
+            VALUES (%s, TRUE)
+            ON CONFLICT (user_id) DO UPDATE
+            SET is_active = TRUE, approved_at = CURRENT_TIMESTAMP
+            RETURNING *
+        """, (user_id,))
+        result = cursor.fetchone()
+        cursor.close()
+        return result
+    
+    def deactivate_reseller(self, user_id):
+        """Deactivate reseller"""
+        cursor = self.connection.cursor()
+        cursor.execute("""
+            UPDATE resellers
+            SET is_active = FALSE
+            WHERE user_id = %s
+            RETURNING *
+        """, (user_id,))
+        result = cursor.fetchone()
+        cursor.close()
+        return result
+    
+    def record_reseller_sale(self, user_id, sale_amount, profit_amount):
+        """Record reseller sale"""
+        cursor = self.connection.cursor()
+        cursor.execute("""
+            UPDATE resellers
+            SET total_sales = total_sales + %s,
+                total_profit = total_profit + %s
+            WHERE user_id = %s
+            RETURNING *
+        """, (sale_amount, profit_amount, user_id))
+        result = cursor.fetchone()
+        cursor.close()
+        return result
+    
+    def get_saas_referral_commission_rate(self):
+        """Get SaaS referral commission rate from settings"""
+        cursor = self.connection.cursor()
+        cursor.execute("SELECT value FROM settings WHERE key = 'saas_referral_commission_rate'")
+        result = cursor.fetchone()
+        cursor.close()
+        return float(result['value']) if result else 0.05
+    
+    def update_saas_referral_commission_rate(self, rate):
+        """Update SaaS referral commission rate"""
+        cursor = self.connection.cursor()
+        cursor.execute("""
+            INSERT INTO settings (key, value)
+            VALUES ('saas_referral_commission_rate', %s)
+            ON CONFLICT (key) DO UPDATE
+            SET value = %s, updated_at = CURRENT_TIMESTAMP
+        """, (str(rate), str(rate)))
+        cursor.close()
+        return True
+    
+    def get_top_buyer_referrers(self, limit=10):
+        """Get top buyer referrers by total earnings"""
+        cursor = self.connection.cursor()
+        cursor.execute("""
+            SELECT u.user_id, u.username, u.first_name, u.buyer_referral_balance,
+                   COUNT(bre.id) as total_referrals,
+                   COALESCE(SUM(bre.commission_amount), 0) as total_earned
+            FROM users u
+            LEFT JOIN buyer_referral_earnings bre ON u.user_id = bre.referrer_user_id
+            GROUP BY u.user_id
+            HAVING COUNT(bre.id) > 0
+            ORDER BY total_earned DESC
+            LIMIT %s
+        """, (limit,))
+        results = cursor.fetchall()
+        cursor.close()
+        return results
     
     def close(self):
         if self.connection:

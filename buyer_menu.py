@@ -117,75 +117,12 @@ async def plan_history(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(message, parse_mode='Markdown')
 
 async def buyer_referral(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
-    user_data = db.get_user(user.id)
-    
-    message = f"""
-🎁 **Buyer Referral Program**
-
-Invite other buyers and earn commission on their purchases!
-
-**Your Referral Link:**
-`t.me/{context.bot.username}?start=buyer_{user_data['referral_code']}`
-
-**Commission Rate:** 5% of all purchases
-**Your Earnings:** ${user_data['referral_earnings']:.2f}
-
-**How it works:**
-1. Share your referral link with potential buyers
-2. When they sign up and make purchases
-3. You earn 5% commission automatically!
-
-💡 The more buyers you refer, the more passive income you earn!
-"""
-    
-    await update.message.reply_text(message, parse_mode='Markdown')
+    from buyer_referral_program import show_buyer_referral_menu
+    await show_buyer_referral_menu(update, context)
 
 async def reseller_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
-    
-    if not db.is_reseller(user.id):
-        message = """
-👔 **Reseller Panel**
-
-You are not currently a reseller.
-
-**Become a Reseller:**
-Resellers can purchase plans at wholesale prices and resell to their own clients with a custom margin.
-
-**Benefits:**
-• Higher profit margins (10-30%)
-• Bulk discount rates
-• White-label options
-• Priority support
-• Custom payment terms
-
-💬 Contact support to apply for reseller status.
-"""
-        await update.message.reply_text(message, parse_mode='Markdown')
-        return
-    
-    reseller_info = db.get_reseller_info(user.id)
-    
-    message = f"""
-👔 **Reseller Dashboard**
-
-📊 **Your Stats:**
-• Margin: {reseller_info['margin_percentage']:.1f}%
-• Total Sales: ${reseller_info['total_sales']:.2f}
-• Total Profit: ${reseller_info['total_profit']:.2f}
-• Status: {'Active' if reseller_info['is_active'] else 'Inactive'}
-
-**Reseller Features:**
-• Purchase at wholesale prices
-• Add your own margin
-• Manage client orders
-• Track sales and profits
-
-💬 Contact support for reseller assistance.
-"""
-    
-    await update.message.reply_text(message, parse_mode='Markdown')
+    from reseller_panel import show_reseller_panel
+    await show_reseller_panel(update, context)
 
 async def switch_to_seller_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     from bot import get_seller_menu

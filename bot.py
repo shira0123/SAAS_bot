@@ -290,6 +290,21 @@ def main():
     application.add_handler(promo_code_management.get_promo_management_handler())
     application.add_handler(plan_management.get_plan_management_handler())
     
+    import buyer_referral_program
+    import buyer_referral_withdrawals
+    import admin_reseller_management
+    import reseller_panel
+    
+    application.add_handler(buyer_referral_program.get_buyer_referral_handler())
+    application.add_handler(buyer_referral_withdrawals.get_buyer_referral_withdrawal_handler())
+    application.add_handler(admin_reseller_management.get_reseller_management_handler())
+    application.add_handler(reseller_panel.get_reseller_panel_handler())
+    
+    application.add_handler(MessageHandler(filters.Regex("^📊 My Referrals$"), buyer_referral_program.show_my_referrals))
+    application.add_handler(MessageHandler(filters.Regex("^💵 Referral Earnings$"), buyer_referral_program.show_my_referrals))
+    application.add_handler(MessageHandler(filters.Regex("^💼 Create Plan Link$"), reseller_panel.create_plan_link))
+    application.add_handler(MessageHandler(filters.Regex("^📊 My Sales$"), reseller_panel.show_sales))
+    
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("setprice", setprice))
     application.add_handler(CommandHandler("setref", admin_reporting.setref_command))

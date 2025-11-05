@@ -1012,3 +1012,118 @@ For issues or questions:
 - Contact bot support via the Support button
 - Check logs for detailed error messages
 - Report bugs to the development team
+
+---
+
+## Phase 9 Testing: Advanced Buyer Features & Reseller Program
+
+### Test 9.1: Buyer Referral Program
+1. As a buyer, click **🎁 Referral Program**
+2. ✅ **Expected**: Referral menu shows:
+   - Your referral link
+   - Current commission rate (5%)
+   - Referral balance
+   - Menu buttons: My Referrals, Referral Earnings, Set Wallet Info, Withdraw Earnings
+
+3. Click **📊 My Referrals**
+4. ✅ **Expected**: List of referral earnings (empty if no referrals yet)
+
+### Test 9.2: Buyer Referral Wallet Setup
+1. From Referral Program, click **💳 Set Wallet Info**
+2. Choose payment method (PayPal/Bank/Crypto)
+3. Enter wallet details
+4. ✅ **Expected**: Wallet info saved successfully
+
+### Test 9.3: Buyer Referral Withdrawal
+1. Ensure you have >$5.00 referral balance
+2. Click **💸 Withdraw Earnings**
+3. ✅ **Expected**: Shows available balance and minimum
+4. Enter withdrawal amount
+5. ✅ **Expected**: Request submitted, pending admin approval
+
+### Test 9.4: Admin - Buyer Referral Withdrawal Management
+**Admin only**
+1. User submits referral withdrawal
+2. Admin checks pending withdrawals (needs implementation in admin panel)
+3. Approve or reject the request
+4. ✅ **Expected**: User's referral balance updated, user notified
+
+### Test 9.5: Reseller Panel Access
+1. As regular user (non-reseller), click **👔 Reseller Panel**
+2. ✅ **Expected**: Message explaining reseller benefits, contact admin to apply
+
+3. As approved reseller, click **👔 Reseller Panel**
+4. ✅ **Expected**: Reseller dashboard shows:
+   - Total sales and profit
+   - Current margin percentage
+   - Menu: Create Plan Link, My Sales, Set Margin, Withdraw Commission
+
+### Test 9.6: Reseller - Create Plan Link
+1. As reseller, click **💼 Create Plan Link**
+2. ✅ **Expected**: Shows reseller link with current margin
+3. Share link with customer
+4. ✅ **Expected**: Purchases through link tracked to reseller
+
+### Test 9.7: Reseller - Set Margin
+1. Click **⚙️ Set Margin**
+2. Enter new margin (5-30%)
+3. ✅ **Expected**: Margin updated successfully
+
+4. Try invalid margin (<5% or >30%)
+5. ✅ **Expected**: Error message, margin not updated
+
+### Test 9.8: Reseller - Withdraw Commission
+1. Click **💸 Withdraw Commission**
+2. ✅ **Expected**: Shows profit balance, minimum $10
+3. Enter amount
+4. ✅ **Expected**: Withdrawal request created, pending admin approval
+
+### Test 9.9: Admin - Reseller Management
+**Admin only**
+1. Send `/resellermgmt`
+2. ✅ **Expected**: Reseller management menu shows:
+   - View Resellers
+   - Approve Reseller
+   - Pending Withdrawals
+   - Commission Summary
+   - Set Commission Rate
+
+3. Click **👥 View Resellers**
+4. ✅ **Expected**: List of all resellers with stats
+
+5. Click **✅ Approve Reseller**
+6. Enter user ID to approve
+7. ✅ **Expected**: User approved as reseller
+
+### Test 9.10: Admin - Reseller Withdrawals
+1. From reseller management, click **💰 Pending Withdrawals**
+2. ✅ **Expected**: List of pending reseller withdrawal requests
+3. Approve or reject a request
+4. ✅ **Expected**: Reseller profit deducted, user notified
+
+### Test 9.11: Admin - Commission Summary
+1. From reseller management, click **📊 Commission Summary**
+2. ✅ **Expected**: Shows:
+   - Current SaaS referral commission rate
+   - Top buyer referrers
+   - Total referrals and earnings per user
+
+### Test 9.12: Full Referral Flow (End-to-End)
+1. User A (referrer) gets referral link from Referral Program
+2. User B clicks link and starts bot with referral parameter
+3. User B purchases a plan
+4. ✅ **Expected**: 
+   - User A earns 5% commission
+   - Commission added to User A's referral balance
+   - Visible in User A's referral earnings
+
+### Test 9.13: Full Reseller Flow (End-to-End)
+1. Admin approves User C as reseller
+2. User C sets margin to 15%
+3. User C creates and shares reseller link
+4. Customer purchases plan through reseller link
+5. ✅ **Expected**:
+   - Sale recorded to reseller
+   - Profit (15% margin) added to reseller's profit
+   - Reseller can withdraw commission
+
