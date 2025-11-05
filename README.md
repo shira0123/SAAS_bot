@@ -192,3 +192,58 @@ The following features are planned for future phases:
 ## Support
 
 For issues or questions about the bot implementation, refer to the inline code documentation or the project documentation in `replit.md`.
+
+## Phase 9 Features (✅ Complete - Advanced Buyer Features & Reseller Program)
+
+### SaaS Buyer Referral Program
+- **Referral System for Buyers**:
+  - Earn commission on referred buyer purchases
+  - Separate referral balance tracking
+  - Custom referral links with tracking
+  - Commission rate: 5% (admin configurable)
+  
+- **Referral Management**:
+  - View referral earnings history
+  - Track referred users and their purchases
+  - Set wallet info for withdrawals
+  - Request referral earnings withdrawals
+
+### Buyer Referral Withdrawal System
+- **Dedicated Withdrawal Flow**:
+  - Separate from seller withdrawals
+  - Minimum withdrawal: $5.00
+  - Wallet-based payouts (PayPal, Bank, Crypto)
+  - Admin approval workflow
+  
+- **Admin Controls**:
+  - View pending buyer referral withdrawals
+  - Approve/reject requests with notes
+  - Track withdrawal history
+  - Automated balance deduction
+
+### Reseller Program
+- **Reseller Panel** (User Side):
+  - Create custom plan links with margin
+  - Set profit margin (5-30%)
+  - View sales and commission summary
+  - Withdraw commission earnings
+  - Track total sales and profits
+  
+- **Reseller Management** (Admin Side):
+  - Approve reseller applications
+  - View all resellers and their stats
+  - Manage reseller withdrawals
+  - Commission summary and top referrers
+  - Deactivate/reactivate resellers
+
+### Admin Features
+- `/resellermgmt` - Access reseller management panel
+- View top buyer referrers
+- Set SaaS referral commission rate
+- Manage both buyer referral and reseller withdrawals
+
+### Commands for Phase 9
+- **For Buyers**: Access via 🎁 Referral Program button
+- **For Resellers**: Access via 👔 Reseller Panel button (resellers only)
+- **For Admins**: Use `/resellermgmt` command
+
