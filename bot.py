@@ -26,6 +26,10 @@ import deposit_menu
 import promo_code_management
 import admin_deposit_management
 import plan_management
+import saas_admin_reports
+import notification_system
+import broadcast_admin
+import admin_reseller_management
 
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -322,6 +326,25 @@ def main():
     application.add_handler(CommandHandler("verifydep", admin_deposit_management.verify_deposit_command))
     application.add_handler(CommandHandler("deposits", admin_deposit_management.view_pending_deposits))
     application.add_handler(CommandHandler("promo", promo_code_management.show_promo_management))
+    application.add_handler(CommandHandler("saasreports", saas_admin_reports.show_saas_reports_menu))
+    application.add_handler(CommandHandler("broadcast", broadcast_admin.show_broadcast_menu))
+    application.add_handler(CommandHandler("adminmgmt", broadcast_admin.show_admin_management_menu))
+    application.add_handler(CommandHandler("resellermgmt", admin_reseller_management.reseller_management_menu))
+    
+    application.add_handler(broadcast_admin.get_broadcast_handler())
+    application.add_handler(broadcast_admin.get_admin_management_handler())
+    
+    application.add_handler(CallbackQueryHandler(saas_admin_reports.show_saas_reports_menu, pattern="^saas_reports$"))
+    application.add_handler(CallbackQueryHandler(saas_admin_reports.show_payment_reports, pattern="^saas_payments$"))
+    application.add_handler(CallbackQueryHandler(saas_admin_reports.show_payment_details, pattern="^payments_"))
+    application.add_handler(CallbackQueryHandler(saas_admin_reports.show_revenue_summary, pattern="^payments_summary$"))
+    application.add_handler(CallbackQueryHandler(saas_admin_reports.show_sales_stats, pattern="^saas_sales$"))
+    application.add_handler(CallbackQueryHandler(saas_admin_reports.show_export_menu, pattern="^saas_export$"))
+    application.add_handler(CallbackQueryHandler(saas_admin_reports.export_csv_data, pattern="^export_"))
+    
+    application.add_handler(CallbackQueryHandler(broadcast_admin.show_admin_management_menu, pattern="^admin_manage$"))
+    application.add_handler(CallbackQueryHandler(broadcast_admin.view_admins, pattern="^admin_view$"))
+    application.add_handler(CallbackQueryHandler(broadcast_admin.view_admin_logs, pattern="^admin_logs$"))
     
     application.add_handler(CallbackQueryHandler(admin_controls.view_withdrawal_detail, pattern="^withdrawal_view_"))
     application.add_handler(CallbackQueryHandler(admin_controls.approve_withdrawal, pattern="^withdrawal_approve_"))
