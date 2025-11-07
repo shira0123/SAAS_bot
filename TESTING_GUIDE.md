@@ -1,10 +1,14 @@
 # Telegram Marketplace Bot - Complete Testing Guide
 
+## ✅ Replit Environment Status
+The bot is currently **RUNNING** in the Replit workflow. Check the console logs to monitor bot activity.
+
 ## Prerequisites
 - A Telegram account you can use for testing
 - Access to the bot on Telegram (@YourBotUsername)
 - A test phone number (ideally a secondary number for safety)
 - Admin access (your user ID must be in ADMIN_IDS)
+- **Bot must be running** (check workflow status in Replit)
 
 ## Important Notes
 ⚠️ **CRITICAL**: When selling a Telegram account:
