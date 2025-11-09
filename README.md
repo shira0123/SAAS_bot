@@ -150,28 +150,39 @@ The following features are planned for future phases:
 
 ```
 .
-├── bot.py                          # Main bot logic and handlers
-├── account_seller.py               # Account selling conversation flow
-├── seller_profile.py               # Seller profile management
-├── seller_withdrawals.py           # Withdrawal request handling
-├── buyer_menu.py                   # Buyer interface and SaaS features
-├── buy_plan.py                     # Plan purchase system (Phase 6)
-├── deposit_menu.py                 # Deposit system (Phase 7)
-├── promo_code_management.py        # Promo code admin panel (Phase 7)
-├── admin_deposit_management.py     # Deposit verification (Phase 7)
-├── admin_controls.py               # Admin withdrawal management
-├── admin_reporting.py              # Admin reporting commands
-├── admin_rate_management.py        # SaaS rate configuration
-├── account_pool_manager.py         # Account pool management
-├── account_status_checker.py       # Automated account verification
-├── account_monitor_scheduler.py    # Account monitoring scheduler
-├── daily_report.py                 # Daily stats report generator
-├── database.py                     # Database operations and schema
-├── config.py                       # Configuration and environment
-├── setup_admin.py                  # Admin setup utility
+├── main.py                         # Entry point
+├── src/                            # Source code directory
+│   ├── bot/                        # Core bot logic
+│   │   ├── bot.py                  # Main bot handlers
+│   │   ├── notification_system.py  # Notifications
+│   │   ├── daily_report.py         # Daily reports
+│   │   └── ...
+│   ├── seller/                     # Seller features
+│   │   ├── account_seller.py       # Account selling workflow
+│   │   ├── seller_profile.py       # Profile management
+│   │   └── seller_withdrawals.py   # Withdrawals
+│   ├── buyer/                      # Buyer SaaS features
+│   │   ├── buyer_menu.py           # Buyer interface
+│   │   ├── buy_plan.py             # Plan purchase
+│   │   ├── deposit_menu.py         # Deposits
+│   │   └── plan_management.py      # Plan management
+│   ├── admin/                      # Admin features
+│   │   ├── admin_controls.py       # Admin controls
+│   │   ├── admin_reporting.py      # Reports
+│   │   ├── broadcast_admin.py      # Broadcasting
+│   │   └── ...
+│   ├── utils/                      # Utilities
+│   │   ├── account_pool_manager.py # Account pool
+│   │   └── ...
+│   └── database/                   # Database
+│       ├── database.py             # DB operations
+│       └── config.py               # Configuration
+├── Dockerfile                      # Docker build config
+├── docker-compose.yml              # Docker services
+├── fixtodo.md                      # Bug tracker
 ├── pyproject.toml                  # Python dependencies
 ├── README.md                       # This file
-└── replit.md                       # Complete project documentation
+└── replit.md                       # Project documentation
 ```
 
 ## Database Schema Overview

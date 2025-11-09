@@ -28,4 +28,4 @@ outputType = "console"
 
 [[workflows.workflow.tasks]]
 task = "shell.exec"
-args = "python bot.py"
+args = "python main.py"
