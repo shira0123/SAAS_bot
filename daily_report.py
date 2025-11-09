@@ -23,45 +23,60 @@ async def send_daily_report():
         
         daily_stats = db.get_daily_stats()
         system_stats = db.get_system_stats()
+        saas_stats = db.get_saas_daily_stats()
+        pool_stats = db.get_account_pool_stats()
         
         report_date = datetime.now().strftime('%Y-%m-%d')
         
         report_message = f"""
-📊 **Daily Report - {report_date}**
+📊 **Comprehensive Daily Report - {report_date}**
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-**📈 Last 24 Hours:**
+**💎 SaaS Sales & Deposits (Today)**
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-👥 New Users: {daily_stats['new_users_24h']}
+💰 Revenue Today: ${saas_stats.get('revenue_today', 0):.2f}
+📦 New Orders: {saas_stats.get('new_orders_today', 0)}
+✅ Active Plans: {saas_stats.get('active_plans', 0)}
+📈 Orders This Week: {saas_stats.get('orders_this_week', 0)}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+**📈 Seller Accounts (Today)**
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
 📱 New Accounts Sold: {daily_stats['new_accounts_24h']}
-🚫 New Bans: {daily_stats['new_bans_24h']}
-💸 New Withdrawal Requests: {daily_stats['new_withdrawals_24h']}
-💰 Amount Withdrawn: ${daily_stats['withdrawn_24h']:.2f}
+🚫 New Banned Accounts: {daily_stats['new_bans_24h']}
+👥 New Users Registered: {daily_stats['new_users_24h']}
+💸 Seller Withdrawals: ${daily_stats['withdrawn_24h']:.2f}
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-**📊 Overall System Stats:**
+**📱 TG Account Pool Status**
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-👥 **Users:**
-• Total: {system_stats['total_users']}
-• Banned: {system_stats['banned_users']}
+📊 Total Accounts: {pool_stats['total_accounts']}
+✅ Active & Ready: {pool_stats['active_accounts']}
+🚫 Banned: {pool_stats['banned_accounts']}
+📦 Full: {pool_stats['full_accounts']}
 
-📱 **Accounts:**
-• Total Sold: {system_stats['total_accounts_sold']}
-• Active: {system_stats['active_accounts']}
-• Banned: {system_stats['banned_accounts']}
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+**👥 Overall System Stats**
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-💰 **Financials:**
-• Current Seller Balances: ${system_stats['total_seller_balance']:.2f}
+• Total Users: {system_stats['total_users']}
+• Banned Users: {system_stats['banned_users']}
+• Total Accounts Ever: {system_stats['total_accounts_sold']}
+
+💰 **Financial Summary:**
+• Seller Balances: ${system_stats['total_seller_balance']:.2f}
 • Total Withdrawn: ${system_stats['total_withdrawn']:.2f}
-• Total Referral Earnings: ${system_stats['total_referral_earnings']:.2f}
+• Referral Earnings: ${system_stats['total_referral_earnings']:.2f}
 
-💸 **Withdrawals:**
-• Pending: {system_stats['pending_withdrawals']}
+💸 **Pending Actions:**
+• Withdrawal Requests: {system_stats['pending_withdrawals']}
+• New Requests (24h): {daily_stats['new_withdrawals_24h']}
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-Generated at: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} UTC
+Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} UTC
 """
         
         for admin_id in ADMIN_IDS:

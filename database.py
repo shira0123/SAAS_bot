@@ -225,6 +225,43 @@ class Database:
         """)
         
         cursor.execute("""
+            CREATE TABLE IF NOT EXISTS deposit_requests (
+                id SERIAL PRIMARY KEY,
+                user_id BIGINT NOT NULL,
+                amount DECIMAL(10, 2) NOT NULL,
+                payment_method VARCHAR(50) NOT NULL,
+                utr VARCHAR(100),
+                status VARCHAR(20) DEFAULT 'pending',
+                verified_by BIGINT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                verified_at TIMESTAMP,
+                FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
+            )
+        """)
+        
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS promo_code_usage (
+                id SERIAL PRIMARY KEY,
+                user_id BIGINT NOT NULL,
+                promo_code_id INTEGER NOT NULL,
+                amount_credited DECIMAL(10, 2) NOT NULL,
+                used_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE,
+                FOREIGN KEY (promo_code_id) REFERENCES promo_codes(id) ON DELETE CASCADE
+            )
+        """)
+        
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS admin_logs (
+                id SERIAL PRIMARY KEY,
+                admin_id BIGINT NOT NULL,
+                action TEXT NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (admin_id) REFERENCES admins(user_id) ON DELETE CASCADE
+            )
+        """)
+        
+        cursor.execute("""
             CREATE TABLE IF NOT EXISTS deposits (
                 id SERIAL PRIMARY KEY,
                 user_id BIGINT NOT NULL,
@@ -1513,6 +1550,165 @@ class Database:
         results = cursor.fetchall()
         cursor.close()
         return results
+    
+    def get_payment_reports(self, filter_type='all'):
+        """Get payment reports by filter type"""
+        cursor = self.connection.cursor()
+        if filter_type == 'all':
+            query = "SELECT * FROM deposit_requests WHERE status = 'verified' ORDER BY created_at DESC LIMIT 50"
+            cursor.execute(query)
+        elif filter_type == 'upi':
+            cursor.execute("SELECT * FROM deposit_requests WHERE payment_method = 'upi' AND status = 'verified' ORDER BY created_at DESC LIMIT 50")
+        elif filter_type == 'promo':
+            cursor.execute("SELECT pc.*, u.username FROM promo_code_usage pcu JOIN promo_codes pc ON pcu.promo_code_id = pc.id JOIN users u ON pcu.user_id = u.user_id ORDER BY pcu.used_at DESC LIMIT 50")
+        else:
+            cursor.execute("SELECT * FROM deposit_requests WHERE status = 'verified' ORDER BY created_at DESC LIMIT 50")
+        results = cursor.fetchall()
+        cursor.close()
+        return results
+    
+    def get_revenue_summary(self):
+        """Get revenue summary for different time periods"""
+        cursor = self.connection.cursor()
+        cursor.execute("""
+            SELECT 
+                COALESCE(SUM(CASE WHEN DATE(created_at) = CURRENT_DATE THEN amount ELSE 0 END), 0) as today_deposits,
+                COALESCE(SUM(CASE WHEN DATE(created_at) = CURRENT_DATE THEN price ELSE 0 END), 0) as today_sales,
+                COUNT(CASE WHEN DATE(created_at) = CURRENT_DATE THEN 1 END) as today_orders,
+                COALESCE(SUM(CASE WHEN created_at >= CURRENT_DATE - INTERVAL '7 days' THEN amount ELSE 0 END), 0) as week_deposits,
+                COALESCE(SUM(CASE WHEN created_at >= CURRENT_DATE - INTERVAL '7 days' THEN price ELSE 0 END), 0) as week_sales,
+                COUNT(CASE WHEN created_at >= CURRENT_DATE - INTERVAL '7 days' THEN 1 END) as week_orders,
+                COALESCE(SUM(CASE WHEN created_at >= CURRENT_DATE - INTERVAL '30 days' THEN amount ELSE 0 END), 0) as month_deposits,
+                COALESCE(SUM(CASE WHEN created_at >= CURRENT_DATE - INTERVAL '30 days' THEN price ELSE 0 END), 0) as month_sales,
+                COUNT(CASE WHEN created_at >= CURRENT_DATE - INTERVAL '30 days' THEN 1 END) as month_orders,
+                COALESCE(SUM(price), 0) as lifetime_revenue,
+                COUNT(*) as lifetime_orders
+            FROM saas_orders
+        """)
+        result = cursor.fetchone()
+        cursor.close()
+        return result or {}
+    
+    def get_sales_stats(self):
+        """Get sales and service delivery statistics"""
+        cursor = self.connection.cursor()
+        cursor.execute("""
+            SELECT 
+                COUNT(CASE WHEN plan_type = 'unlimited_views' AND status = 'active' THEN 1 END) as unlimited_views,
+                COUNT(CASE WHEN plan_type = 'limited_views' AND status = 'active' THEN 1 END) as limited_views,
+                COUNT(CASE WHEN plan_type = 'unlimited_reactions' AND status = 'active' THEN 1 END) as unlimited_reactions,
+                COUNT(CASE WHEN plan_type = 'limited_reactions' AND status = 'active' THEN 1 END) as limited_reactions,
+                COALESCE(SUM(delivered_posts), 0) as total_delivered,
+                COUNT(CASE WHEN status = 'pending' THEN 1 END) as pending_deliveries,
+                COUNT(DISTINCT channel_username) as active_channels
+            FROM saas_orders WHERE status IN ('active', 'pending')
+        """)
+        result = cursor.fetchone()
+        cursor.execute("SELECT COUNT(*) as active_accounts, COUNT(CASE WHEN join_count < max_joins THEN 1 END) as available_accounts, COUNT(CASE WHEN join_count > 0 THEN 1 END) as accounts_in_use FROM sold_accounts WHERE account_status = 'active' AND is_banned = FALSE")
+        pool_stats = cursor.fetchone()
+        result.update(pool_stats)
+        cursor.close()
+        return result or {}
+    
+    def get_export_data(self, export_type):
+        """Get data for CSV export"""
+        cursor = self.connection.cursor()
+        if export_type == 'sales':
+            cursor.execute("SELECT id, user_id, plan_type, price, status, created_at FROM saas_orders ORDER BY created_at DESC LIMIT 1000")
+        elif export_type == 'users':
+            cursor.execute("SELECT user_id, username, first_name, seller_balance, buyer_wallet_balance, created_at FROM users ORDER BY created_at DESC LIMIT 1000")
+        elif export_type == 'accounts':
+            cursor.execute("SELECT id, phone_number, account_status, join_count, max_joins, is_banned, created_at FROM sold_accounts ORDER BY created_at DESC LIMIT 1000")
+        else:
+            return []
+        results = cursor.fetchall()
+        cursor.close()
+        return results
+    
+    def get_broadcast_users(self, target_group):
+        """Get users for broadcasting based on target group"""
+        cursor = self.connection.cursor()
+        if target_group == 'all':
+            cursor.execute("SELECT user_id FROM users WHERE is_banned = FALSE")
+        elif target_group == 'active':
+            cursor.execute("SELECT DISTINCT u.user_id FROM users u JOIN saas_orders so ON u.user_id = so.user_id WHERE so.status = 'active' AND u.is_banned = FALSE")
+        elif target_group == 'expired':
+            cursor.execute("SELECT DISTINCT u.user_id FROM users u JOIN saas_orders so ON u.user_id = so.user_id WHERE so.status = 'expired' AND u.is_banned = FALSE")
+        elif target_group == 'resellers':
+            cursor.execute("SELECT DISTINCT u.user_id FROM users u JOIN resellers r ON u.user_id = r.user_id WHERE r.is_active = TRUE AND u.is_banned = FALSE")
+        else:
+            return []
+        results = cursor.fetchall()
+        cursor.close()
+        return results
+    
+    def add_admin(self, user_id, username, role='admin'):
+        """Add a new admin"""
+        cursor = self.connection.cursor()
+        cursor.execute("""
+            INSERT INTO admins (user_id, username, role, is_active)
+            VALUES (%s, %s, %s, TRUE)
+            ON CONFLICT (user_id) DO UPDATE
+            SET is_active = TRUE, role = %s, updated_at = CURRENT_TIMESTAMP
+            RETURNING *
+        """, (user_id, username, role, role))
+        result = cursor.fetchone()
+        cursor.close()
+        return result
+    
+    def remove_admin(self, user_id):
+        """Remove admin privileges"""
+        cursor = self.connection.cursor()
+        cursor.execute("UPDATE admins SET is_active = FALSE WHERE user_id = %s RETURNING *", (user_id,))
+        result = cursor.fetchone()
+        cursor.close()
+        return result
+    
+    def get_all_admins(self):
+        """Get all admins"""
+        cursor = self.connection.cursor()
+        cursor.execute("SELECT * FROM admins ORDER BY created_at DESC")
+        results = cursor.fetchall()
+        cursor.close()
+        return results
+    
+    def log_admin_action(self, admin_id, action):
+        """Log admin action"""
+        cursor = self.connection.cursor()
+        cursor.execute("""
+            INSERT INTO admin_logs (admin_id, action, created_at)
+            VALUES (%s, %s, CURRENT_TIMESTAMP)
+        """, (admin_id, action))
+        cursor.close()
+    
+    def get_admin_logs(self, limit=50):
+        """Get admin activity logs"""
+        cursor = self.connection.cursor()
+        cursor.execute("""
+            SELECT al.*, a.username 
+            FROM admin_logs al
+            JOIN admins a ON al.admin_id = a.user_id
+            ORDER BY al.created_at DESC
+            LIMIT %s
+        """, (limit,))
+        results = cursor.fetchall()
+        cursor.close()
+        return results
+    
+    def get_saas_daily_stats(self):
+        """Get SaaS-specific daily statistics"""
+        cursor = self.connection.cursor()
+        cursor.execute("""
+            SELECT 
+                COUNT(CASE WHEN DATE(created_at) = CURRENT_DATE THEN 1 END) as new_orders_today,
+                COALESCE(SUM(CASE WHEN DATE(created_at) = CURRENT_DATE THEN price ELSE 0 END), 0) as revenue_today,
+                COUNT(CASE WHEN status = 'active' THEN 1 END) as active_plans,
+                COUNT(CASE WHEN DATE(created_at) >= CURRENT_DATE - INTERVAL '7 days' THEN 1 END) as orders_this_week
+            FROM saas_orders
+        """)
+        result = cursor.fetchone()
+        cursor.close()
+        return result or {}
     
     def close(self):
         if self.connection:

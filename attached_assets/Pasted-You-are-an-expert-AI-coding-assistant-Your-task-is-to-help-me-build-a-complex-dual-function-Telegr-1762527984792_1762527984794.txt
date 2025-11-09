@@ -1,0 +1,70 @@
+You are an expert AI coding assistant. Your task is to help me build a complex, dual-function Telegram bot.
+
+Project Context
+What We Are Building
+We are creating a sophisticated Telegram bot that operates as a two-sided marketplace.
+
+Seller Side: The bot will automatically purchase Telegram accounts from users ("Sellers"). Users will be guided through a flow to submit their phone number and login codes, and upon successful session capture, they will be paid to an in-bot balance.
+
+Buyer (SaaS) Side: The bot will use this acquired pool of accounts to run a Software-as-a-Service (SaaS) business. "Buyers" can purchase plans to receive automated views and reactions on their channel posts, which will be delivered by the accounts we collected.
+
+Target Audience
+"Sellers": Telegram users who want to earn money by selling their accounts to the system.
+
+"Buyers": Telegram channel owners and administrators who want to purchase engagement (views, reactions). This also includes "Resellers".
+
+"Admins": The operators (us) who will manage the system, set prices, approve withdrawals, and monitor the account pool.
+
+Primary Goal
+The purpose is to create a fully automated business. We will buy a resource (Telegram accounts) and use it to sell a service (engagement). The bot must automate account acquisition, seller payouts, buyer payments, and service delivery.
+
+Your Next Task: Phase 10 (Global Admin Reporting & Final Polish)
+Your objective is to consolidate all admin reporting into one place, implement the final notification and broadcast systems, and create a comprehensive daily report.
+
+Please complete the following four tasks:
+
+10.1. SaaS Admin Reporting
+First, build the comprehensive reporting section for the SaaS (buyer) side of the bot:
+
+Payments & Reports: Create a menu for admins to list all payments, filter them by gateway (UPI, Crypto, etc.), and show revenue summaries (Today, Week, Month).
+
+Sales & Usage Stats: Implement a section to show sales data (Today, Month, Lifetime) and service delivery summaries.
+
+Export Reports: Add a function for the admin to export sales or user data as a CSV file.
+
+10.2. Consolidated Notification System
+Implement the complete, system-wide notification logic for all events:
+
+Admin Notifications: Trigger alerts for: New Deposit, New Plan Purchase, Referral Sale, Reseller Sale, and all Withdrawal Requests.
+
+Referral Notifications: Notify users when they earn a commission and when their referral withdrawal is approved.
+
+Reseller Notifications: Notify resellers of a new order via their link and when their commission withdrawal is approved.
+
+User Notifications: Ensure alerts are sent for: Payment success, plan activation, and plan expiry reminders.
+
+10.3. Broadcast & Admin Management
+Build the tools for mass communication and admin role management:
+
+Broadcast Message: Implement a command for admins to send a message to different user segments: All Users, Active Buyers, Expired Buyers, and Resellers.
+
+Admin Management: Create the panel for the root admin to manage other admins:
+
+Add/Remove Admin
+
+Assign Roles
+
+View Admin Logs
+
+10.4. Final Daily Reports (Scheduled)
+Finally, upgrade the daily report from Phase 4.4 to be all-inclusive:
+
+Combine Reports: Modify the scheduled nightly job to combine all reports into one comprehensive message for the admin.
+
+Report Contents: The message must include:
+
+SaaS Sales & Deposit Summary (Today's revenue).
+
+Seller Account Stats (Today Added/Banned).
+
+TG Account Pool Status (Total, Active, Banned).
