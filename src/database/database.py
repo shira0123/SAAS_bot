@@ -1,5 +1,6 @@
 import psycopg2
 from psycopg2.extras import RealDictCursor
+from dotenv import load_dotenv
 import os
 from datetime import datetime
 
@@ -9,6 +10,9 @@ class Database:
         self.connect()
         
     def connect(self):
+        import os
+        PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        load_dotenv(dotenv_path=os.path.join(PROJECT_ROOT, '.env'))
         try:
             self.connection = psycopg2.connect(
                 os.getenv('DATABASE_URL'),

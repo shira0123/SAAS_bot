@@ -4,7 +4,7 @@ from telethon import TelegramClient
 from telethon.sessions import StringSession
 from telethon.errors import AuthKeyUnregisteredError, UserDeactivatedError, SessionRevokedError
 from src.database.database import Database
-from src.database.config import TELEGRAM_API_ID, TELEGRAM_API_HASH, ADMIN_IDS, BOT_TOKEN
+from src.database.config import TELEGRAM_API_ID, TELEGRAM_API_HASH, ADMIN_IDS, BUYER_BOT_TOKEN as BOT_TOKEN
 from telegram import Bot
 
 logging.basicConfig(

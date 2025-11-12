@@ -2,7 +2,7 @@ import asyncio
 import logging
 from telegram import Bot
 from src.database.database import Database
-from src.database.config import BOT_TOKEN, ADMIN_IDS
+from src.database.config import BUYER_BOT_TOKEN as BOT_TOKEN, ADMIN_IDS
 from datetime import datetime
 
 logging.basicConfig(
