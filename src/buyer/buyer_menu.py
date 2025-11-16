@@ -8,19 +8,42 @@ logger = logging.getLogger(__name__)
 db = Database()
 
 def get_buyer_menu():
+    """
+    Returns the ReplyKeyboardMarkup for the buyer menu.
+    The "Back to Seller Menu" button is removed.
+    """
     keyboard = [
         [KeyboardButton("💎 Buy Plan")],
         [KeyboardButton("💰 Deposit"), KeyboardButton("📋 My Plans")],
         [KeyboardButton("📊 Plan History"), KeyboardButton("🎁 Referral Program")],
-        [KeyboardButton("👔 Reseller Panel"), KeyboardButton("💬 Support")],
-        [KeyboardButton("🔙 Back to Seller Menu")]
+        [KeyboardButton("👔 Reseller Panel"), KeyboardButton("💬 Support")]
     ]
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
 
 async def show_buyer_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Shows the main buyer menu."""
     user = update.effective_user
     user_data = db.get_user(user.id)
     
+    if not user_data:
+        # This case might happen if a user starts the buyer bot
+        # without ever starting the seller bot.
+        # We should create them.
+        from main_buyer import generate_referral_code
+        referral_code = generate_referral_code()
+        while db.get_user_by_referral(referral_code):
+            referral_code = generate_referral_code()
+            
+        db.create_user(
+            user_id=user.id,
+            username=user.username,
+            first_name=user.first_name,
+            last_name=user.last_name,
+            referral_code=referral_code,
+            referred_by=None # No referral context here
+        )
+        user_data = db.get_user(user.id)
+
     is_reseller = db.is_reseller(user.id)
     
     welcome_message = f"""
@@ -124,10 +147,5 @@ async def reseller_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     from src.buyer.reseller_panel import show_reseller_panel
     await show_reseller_panel(update, context)
 
-async def switch_to_seller_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    from src.bot.bot import get_seller_menu
-    
-    await update.message.reply_text(
-        "🔙 Switched to Seller Menu",
-        reply_markup=get_seller_menu()
-    )
+# --- REMOVED ---
+# The switch_to_seller_menu function is no longer needed.

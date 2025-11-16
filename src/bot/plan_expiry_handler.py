@@ -7,7 +7,7 @@ from src.database.database import Database
 from src.database.config import TELEGRAM_API_ID, TELEGRAM_API_HASH, ADMIN_IDS
 from datetime import datetime, timedelta
 from telegram import Bot
-from src.database.config import BOT_TOKEN
+from src.database.config import BUYER_BOT_TOKEN as BOT_TOKEN
 
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',

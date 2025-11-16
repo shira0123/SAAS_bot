@@ -40,7 +40,6 @@ async def start_withdraw(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return ConversationHandler.END
         
         stats = db.get_user_stats(user_id)
-        balance = float(stats['seller_balance'])
         
         if not stats['payout_method'] or not stats['payout_details']:
             await update.message.reply_text(
@@ -51,6 +50,11 @@ async def start_withdraw(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             return ConversationHandler.END
         
+        # --- NEW: Collateral Logic ---
+        total_balance = float(stats['seller_balance'])
+        at_risk_balance = db.get_at_risk_balance(user_id)
+        withdrawable_balance = total_balance - at_risk_balance
+        
         withdrawal_count = db.get_user_withdrawal_count(user_id)
         limits = db.get_withdrawal_limits()
         
@@ -60,16 +64,18 @@ async def start_withdraw(update: Update, context: ContextTypes.DEFAULT_TYPE):
             min_withdrawal = limits[-1]
         
         context.user_data['min_withdrawal'] = min_withdrawal
-        context.user_data['user_balance'] = balance
+        context.user_data['withdrawable_balance'] = withdrawable_balance
         
         withdrawal_number = withdrawal_count + 1
         
         await update.message.reply_text(
             f"💸 **Withdrawal Request**\n\n"
-            f"💰 Your Balance: ${balance:.2f}\n"
+            f"💰 **Total Balance:** ${total_balance:.2f}\n"
+            f"🔒 **At-Risk (Collateral):** ${at_risk_balance:.2f}\n"
+            f"✅ **Withdrawable Balance:** ${withdrawable_balance:.2f}\n\n"
             f"📊 This is your #{withdrawal_number} withdrawal\n"
             f"💵 Minimum Amount: ${min_withdrawal:.2f}\n\n"
-            f"Please enter the amount you want to withdraw (in USD):",
+            f"Please enter the amount you want to withdraw (max ${withdrawable_balance:.2f}):",
             reply_markup=ReplyKeyboardMarkup([
                 [KeyboardButton("❌ Cancel")]
             ], resize_keyboard=True),
@@ -115,7 +121,7 @@ async def receive_amount(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return REQUEST_AMOUNT
     
     min_withdrawal = context.user_data.get('min_withdrawal', 10.0)
-    user_balance = context.user_data.get('user_balance', 0.0)
+    withdrawable_balance = context.user_data.get('withdrawable_balance', 0.0)
     
     if amount < min_withdrawal:
         await update.message.reply_text(
@@ -126,12 +132,13 @@ async def receive_amount(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return REQUEST_AMOUNT
     
-    if amount > user_balance:
+    if amount > withdrawable_balance:
         await update.message.reply_text(
-            f"❌ Insufficient balance!\n\n"
-            f"Your balance: ${user_balance:.2f}\n"
+            f"❌ Insufficient withdrawable balance!\n\n"
+            f"Your withdrawable balance: ${withdrawable_balance:.2f}\n"
             f"You requested: ${amount:.2f}\n\n"
-            f"Please enter a lower amount."
+            f"Please enter a lower amount.",
+            parse_mode='Markdown'
         )
         return REQUEST_AMOUNT
     

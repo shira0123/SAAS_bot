@@ -4,8 +4,9 @@ from telethon import TelegramClient
 from telethon.sessions import StringSession
 from telethon.errors import AuthKeyUnregisteredError, UserDeactivatedError, SessionRevokedError
 from src.database.database import Database
-from src.database.config import TELEGRAM_API_ID, TELEGRAM_API_HASH, ADMIN_IDS, BOT_TOKEN
+from src.database.config import TELEGRAM_API_ID, TELEGRAM_API_HASH, ADMIN_IDS, BUYER_BOT_TOKEN as BOT_TOKEN
 from telegram import Bot
+from datetime import datetime
 
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -14,6 +15,17 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 db = Database()
+bot = None
+
+async def get_bot():
+    """Initializes and returns the bot instance."""
+    global bot
+    if bot is None:
+        if not BOT_TOKEN:
+            logger.error("BOT_TOKEN not found for checker")
+            return None
+        bot = Bot(token=BOT_TOKEN)
+    return bot
 
 async def check_single_account(account):
     account_id = account['id']
@@ -34,8 +46,7 @@ async def check_single_account(account):
         
         if not await client.is_user_authorized():
             logger.warning(f"Account #{account_id} is not authorized")
-            db.update_account_status(account_id, 'banned', is_banned=True)
-            db.log_account_usage(account_id, 0, None, 'status_check', False, 'Not authorized')
+            await handle_banned_account(account, 'Not authorized')
             return {
                 'account_id': account_id,
                 'phone': phone,
@@ -47,8 +58,7 @@ async def check_single_account(account):
         
         if me.restricted:
             logger.warning(f"Account #{account_id} is restricted")
-            db.update_account_status(account_id, 'banned', is_banned=True)
-            db.log_account_usage(account_id, 0, None, 'status_check', False, 'Account restricted')
+            await handle_banned_account(account, 'Account restricted')
             return {
                 'account_id': account_id,
                 'phone': phone,
@@ -56,7 +66,8 @@ async def check_single_account(account):
                 'reason': 'Account restricted'
             }
         
-        dialogs = await client.get_dialogs(limit=1)
+        # Check if it can perform a basic action
+        await client.get_dialogs(limit=1)
         
         if account['is_banned']:
             logger.info(f"Account #{account_id} is now active again")
@@ -74,8 +85,7 @@ async def check_single_account(account):
         
     except (AuthKeyUnregisteredError, UserDeactivatedError, SessionRevokedError) as e:
         logger.error(f"Account #{account_id} is banned: {type(e).__name__}")
-        db.update_account_status(account_id, 'banned', is_banned=True)
-        db.log_account_usage(account_id, 0, None, 'status_check', False, type(e).__name__)
+        await handle_banned_account(account, type(e).__name__)
         return {
             'account_id': account_id,
             'phone': phone,
@@ -96,6 +106,53 @@ async def check_single_account(account):
             await client.disconnect()
             logger.debug(f"Disconnected client for account #{account_id}")
 
+# --- NEW FUNCTION: Handle Collateral Penalty ---
+async def handle_banned_account(account, reason):
+    """
+    Marks an account as banned and applies a penalty if it's within
+    the probation period.
+    """
+    account_id = account['id']
+    
+    # Update status in DB
+    db.update_account_status(account_id, 'banned', is_banned=True)
+    db.log_account_usage(account_id, 0, None, 'status_check', False, reason)
+    
+    # Check if account is still in probation
+    probation_ends_at = account.get('probation_ends_at')
+    if probation_ends_at and probation_ends_at > datetime.now():
+        seller_id = account['seller_user_id']
+        penalty = float(account['sold_price'])
+        
+        if seller_id == 0 or penalty == 0:
+            logger.info(f"Account #{account_id} was admin-added. No penalty.")
+            return
+
+        logger.warning(f"Account #{account_id} (Seller: {seller_id}) banned within probation. Applying ${penalty} penalty.")
+        
+        # 1. Deduct from seller's balance
+        db.update_user_balance(seller_id, -penalty, balance_type='seller')
+        
+        # 2. Mark probation as 'completed' to prevent double penalty
+        db.connection.cursor().execute(
+            "UPDATE sold_accounts SET probation_ends_at = %s WHERE id = %s",
+            (datetime.now(), account_id)
+        )
+        
+        # 3. Notify the seller
+        try:
+            telegram_bot = await get_bot()
+            if telegram_bot:
+                await telegram_bot.send_message(
+                    chat_id=seller_id,
+                    text=f"❌ **Account Reclaimed**\n\n"
+                         f"The account `{account['phone_number']}` you sold was reclaimed or banned within the 30-day security period.\n\n"
+                         f"A penalty of **${penalty:.2f}** has been deducted from your balance.",
+                    parse_mode='Markdown'
+                )
+        except Exception as e:
+            logger.error(f"Failed to send penalty notification to user {seller_id}: {e}")
+
 async def check_all_accounts():
     logger.info("Starting account status check...")
     
@@ -112,7 +169,7 @@ async def check_all_accounts():
     for account in accounts:
         result = await check_single_account(account)
         results.append(result)
-        await asyncio.sleep(2)
+        await asyncio.sleep(2) # 2-second delay between checks
     
     logger.info(f"Account check complete. Checked {len(results)} accounts")
     
@@ -141,13 +198,12 @@ async def check_pool_and_alert():
     return stats
 
 async def send_low_pool_alert(active_accounts, total_accounts):
-    if not BOT_TOKEN or not ADMIN_IDS:
+    telegram_bot = await get_bot()
+    if not telegram_bot or not ADMIN_IDS:
         logger.error("Cannot send alert: BOT_TOKEN or ADMIN_IDS not configured")
         return
     
     try:
-        bot = Bot(token=BOT_TOKEN)
-        
         alert_message = f"""
 🚨 **LOW ACCOUNT POOL ALERT** 🚨
 
@@ -168,7 +224,7 @@ Use /accounts to manage the pool.
         
         for admin_id in ADMIN_IDS:
             try:
-                await bot.send_message(
+                await telegram_bot.send_message(
                     chat_id=admin_id,
                     text=alert_message,
                     parse_mode='Markdown'

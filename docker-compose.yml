@@ -1,12 +1,12 @@
-version: '3.8'
-
 services:
-  telegram-bot:
+  # --- Bot 1: The Seller Bot ---
+  seller-bot:
     build: .
-    container_name: telegram_marketplace_bot
+    container_name: telegram_seller_bot
     restart: unless-stopped
     environment:
-      - BOT_TOKEN=${BOT_TOKEN}
+      # CORRECTED: Pass the variable as SELLER_BOT_TOKEN
+      - SELLER_BOT_TOKEN=${SELLER_BOT_TOKEN}
       - TELEGRAM_API_ID=${TELEGRAM_API_ID}
       - TELEGRAM_API_HASH=${TELEGRAM_API_HASH}
       - ADMIN_IDS=${ADMIN_IDS}
@@ -18,9 +18,103 @@ services:
       - ./src:/app/src
       - ./logs:/app/logs
     depends_on:
-      - postgres
+      postgres:
+        condition: service_healthy
     networks:
       - bot-network
+    command: ["python", "main_seller.py"]
+
+  # --- Bot 2: The Buyer (SaaS) Bot ---
+  buyer-bot:
+    build: .
+    container_name: telegram_buyer_bot
+    restart: unless-stopped
+    environment:
+      # CORRECTED: Pass the variable as BUYER_BOT_TOKEN
+      - BUYER_BOT_TOKEN=${BUYER_BOT_TOKEN}
+      - TELEGRAM_API_ID=${TELEGRAM_API_ID}
+      - TELEGRAM_API_HASH=${TELEGRAM_API_HASH}
+      - ADMIN_IDS=${ADMIN_IDS}
+      - DATABASE_URL=${DATABASE_URL}
+    volumes:
+      - ./src:/app/src
+      - ./logs:/app/logs
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - bot-network
+    command: ["python", "main_buyer.py"]
+
+  # --- WORKER SERVICES ---
+
+  report_worker:
+    build: .
+    container_name: telegram_report_worker
+    restart: unless-stopped
+    environment:
+      # CORRECTED: Pass the variable as BUYER_BOT_TOKEN
+      - BUYER_BOT_TOKEN=${BUYER_BOT_TOKEN}
+      - ADMIN_IDS=${ADMIN_IDS}
+      - DATABASE_URL=${DATABASE_URL}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - bot-network
+    command: ["python", "src/bot/run_scheduler.py"]
+
+  account_worker:
+    build: .
+    container_name: telegram_account_worker
+    restart: unless-stopped
+    environment:
+      # CORRECTED: Pass the variable as BUYER_BOT_TOKEN
+      - BUYER_BOT_TOKEN=${BUYER_BOT_TOKEN}
+      - TELEGRAM_API_ID=${TELEGRAM_API_ID}
+      - TELEGRAM_API_HASH=${TELEGRAM_API_HASH}
+      - ADMIN_IDS=${ADMIN_IDS}
+      - DATABASE_URL=${DATABASE_URL}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - bot-network
+    command: ["python", "src/utils/account_monitor_scheduler.py"]
+
+  delivery_worker:
+    build: .
+    container_name: telegram_delivery_worker
+    restart: unless-stopped
+    environment:
+      - TELEGRAM_API_ID=${TELEGRAM_API_ID}
+      - TELEGRAM_API_HASH=${TELEGRAM_API_HASH}
+      - DATABASE_URL=${DATABASE_URL}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - bot-network
+    command: ["python", "src/utils/service_delivery_worker.py"]
+
+  expiry_worker:
+    build: .
+    container_name: telegram_expiry_worker
+    restart: unless-stopped
+    environment:
+      # CORRECTED: Pass the variable as BUYER_BOT_TOKEN
+      - BUYER_BOT_TOKEN=${BUYER_BOT_TOKEN}
+      - TELEGRAM_API_ID=${TELEGRAM_API_ID}
+      - TELEGRAM_API_HASH=${TELEGRAM_API_HASH}
+      - DATABASE_URL=${DATABASE_URL}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - bot-network
+    command: ["python", "src/bot/plan_expiry_handler.py"]
+
+  # --- DATABASE ---
 
   postgres:
     image: postgres:15-alpine
@@ -36,6 +130,11 @@ services:
       - "${PGPORT:-5432}:5432"
     networks:
       - bot-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${PGUSER:-postgres} -d ${PGDATABASE:-telegram_bot}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
 
 volumes:
   postgres_data:

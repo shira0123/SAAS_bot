@@ -1,5 +1,6 @@
 import psycopg2
 from psycopg2.extras import RealDictCursor
+from dotenv import load_dotenv
 import os
 from datetime import datetime
 
@@ -9,6 +10,9 @@ class Database:
         self.connect()
         
     def connect(self):
+        import os
+        PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        load_dotenv(dotenv_path=os.path.join(PROJECT_ROOT, '.env'))
         try:
             self.connection = psycopg2.connect(
                 os.getenv('DATABASE_URL'),
@@ -74,6 +78,8 @@ class Database:
                 is_full BOOLEAN DEFAULT FALSE,
                 last_used TIMESTAMP,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                sold_price DECIMAL(10, 2) NOT NULL DEFAULT 0.00,
+                probation_ends_at TIMESTAMP,
                 FOREIGN KEY (seller_user_id) REFERENCES users(user_id) ON DELETE CASCADE
             )
         """)
@@ -127,6 +133,7 @@ class Database:
             ON CONFLICT (key) DO NOTHING
         """)
         
+        # --- MODIFIED: Added Daily Quota columns ---
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS saas_orders (
                 id SERIAL PRIMARY KEY,
@@ -139,7 +146,16 @@ class Database:
                 channel_id BIGINT,
                 status VARCHAR(20) DEFAULT 'active',
                 delivered_posts INTEGER DEFAULT 0,
-                delay_seconds INTEGER DEFAULT 10,
+                
+                -- Drip-Feed --
+                drip_feed_hours INTEGER DEFAULT 0,
+                delay_seconds INTEGER DEFAULT 1,
+                
+                -- NEW: Daily Quota Tracking --
+                daily_posts_limit INTEGER DEFAULT 0,
+                daily_delivery_count INTEGER DEFAULT 0,
+                last_delivery_date DATE,
+                
                 price DECIMAL(10, 2) NOT NULL,
                 promo_code VARCHAR(50),
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -147,6 +163,7 @@ class Database:
                 FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
             )
         """)
+        # --- END MODIFIED ---
         
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS saas_rates (
@@ -161,13 +178,18 @@ class Database:
         cursor.execute("""
             INSERT INTO saas_rates (rate_type, price_per_unit, description)
             VALUES 
-                ('per_view', 0.001, 'Price per single view'),
-                ('per_day_view', 0.05, 'Price per view per day'),
-                ('per_reaction', 0.002, 'Price per reaction'),
-                ('per_day_reaction', 0.08, 'Price per reaction per day')
+                ('per_view', 0.0010, 'Price per single view (Limited Plan)'),
+                ('per_day_view', 0.0500, 'Price per view per day (Unlimited Plan)'),
+                ('per_reaction', 0.0020, 'Price per reaction (Limited Plan)'),
+                ('per_day_reaction', 0.0800, 'Price per reaction per day (Unlimited Plan)'),
+                ('join_view_n_posts', 0.0015, 'Price per view (Join & Leave N Posts Plan)'),
+                ('join_react_n_posts', 0.0025, 'Price per reaction (Join & Leave N Posts Plan)'),
+                ('join_view_recent_post', 0.0018, 'Price per view (Join & Leave Recent Post Plan)'),
+                ('join_react_recent_post', 0.0028, 'Price per reaction (Join & Leave Recent Post Plan)')
             ON CONFLICT (rate_type) DO NOTHING
         """)
         
+        # ... (all other tables are correct) ...
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS promo_codes (
                 id SERIAL PRIMARY KEY,
@@ -412,6 +434,20 @@ class Database:
         result = cursor.fetchone()
         cursor.close()
         return result['count'] if result else 0
+
+    def get_at_risk_balance(self, user_id):
+        """Calculates the total funds tied to accounts still in probation."""
+        cursor = self.connection.cursor()
+        cursor.execute("""
+            SELECT COALESCE(SUM(sold_price), 0) as at_risk
+            FROM sold_accounts
+            WHERE seller_user_id = %s
+              AND account_status = 'active'
+              AND probation_ends_at > CURRENT_TIMESTAMP
+        """, (user_id,))
+        result = cursor.fetchone()
+        cursor.close()
+        return float(result['at_risk']) if result else 0.0
     
     def get_user_total_earnings(self, user_id):
         cursor = self.connection.cursor()
@@ -465,13 +501,13 @@ class Database:
         cursor.close()
         return True
     
-    def create_sold_account(self, seller_user_id, phone_number, session_string):
+    def create_sold_account(self, seller_user_id, phone_number, session_string, sold_price, probation_ends_at):
         cursor = self.connection.cursor()
         cursor.execute("""
-            INSERT INTO sold_accounts (seller_user_id, phone_number, session_string, account_status)
-            VALUES (%s, %s, %s, 'processing')
+            INSERT INTO sold_accounts (seller_user_id, phone_number, session_string, account_status, sold_price, probation_ends_at)
+            VALUES (%s, %s, %s, 'processing', %s, %s)
             RETURNING id
-        """, (seller_user_id, phone_number, session_string))
+        """, (seller_user_id, phone_number, session_string, sold_price, probation_ends_at))
         result = cursor.fetchone()
         cursor.close()
         return result['id'] if result else None
@@ -818,7 +854,9 @@ class Database:
                 is_banned,
                 is_full,
                 last_used,
-                created_at
+                created_at,
+                sold_price,
+                probation_ends_at
             FROM sold_accounts
             ORDER BY created_at DESC
             LIMIT %s OFFSET %s
@@ -844,8 +882,8 @@ class Database:
     def add_account_manual(self, phone_number, session_string):
         cursor = self.connection.cursor()
         cursor.execute("""
-            INSERT INTO sold_accounts (seller_user_id, phone_number, session_string, account_status)
-            VALUES (0, %s, %s, 'active')
+            INSERT INTO sold_accounts (seller_user_id, phone_number, session_string, account_status, sold_price, probation_ends_at)
+            VALUES (0, %s, %s, 'active', 0.00, CURRENT_TIMESTAMP)
             RETURNING id
         """, (phone_number, session_string))
         result = cursor.fetchone()
@@ -863,7 +901,7 @@ class Database:
         if is_banned is not None:
             cursor.execute("""
                 UPDATE sold_accounts
-                SET account_status = %s, is_banned = %s, updated_at = CURRENT_TIMESTAMP
+                SET account_status = %s, is_banned = %s
                 WHERE id = %s
             """, (status, is_banned, account_id))
         else:
@@ -908,13 +946,22 @@ class Database:
         cursor.close()
         return True
     
-    def create_saas_order(self, user_id, plan_type, duration, views_per_post, total_posts, channel_username, price, promo_code=None):
+    # --- MODIFIED: Save drip-feed info and daily limit ---
+    def create_saas_order(self, user_id, plan_type, duration, views_per_post, total_posts, channel_username, price, promo_code=None, drip_feed_hours=0, delay_seconds=1, daily_posts_limit=0):
         cursor = self.connection.cursor()
         cursor.execute("""
-            INSERT INTO saas_orders (user_id, plan_type, duration, views_per_post, total_posts, channel_username, price, promo_code)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            INSERT INTO saas_orders (
+                user_id, plan_type, duration, views_per_post, total_posts, 
+                channel_username, price, promo_code, drip_feed_hours, 
+                delay_seconds, daily_posts_limit, status
+            )
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'pending_payment')
             RETURNING id
-        """, (user_id, plan_type, duration, views_per_post, total_posts, channel_username, price, promo_code))
+        """, (
+            user_id, plan_type, duration, views_per_post, total_posts, 
+            channel_username, price, promo_code, drip_feed_hours, 
+            delay_seconds, daily_posts_limit
+        ))
         result = cursor.fetchone()
         cursor.close()
         return result['id'] if result else None
@@ -1098,9 +1145,9 @@ class Database:
         cursor.execute("""
             UPDATE deposits
             SET amount = %s, status = 'verified', verified_at = CURRENT_TIMESTAMP, verified_by = %s
-            WHERE transaction_id = %s
+            WHERE (transaction_id = %s OR utr = %s) AND (status = 'pending' OR status = 'pending_verification')
             RETURNING user_id
-        """, (amount, admin_id, transaction_id))
+        """, (amount, admin_id, transaction_id, transaction_id))
         result = cursor.fetchone()
         
         if result:
@@ -1167,6 +1214,18 @@ class Database:
         cursor.close()
         return result
     
+    def decrement_account_join_count(self, account_id):
+        """Decrement join_count when account leaves a channel"""
+        cursor = self.connection.cursor()
+        cursor.execute("""
+            UPDATE sold_accounts
+            SET join_count = GREATEST(0, join_count - 1),
+                is_full = FALSE
+            WHERE id = %s
+        """, (account_id,))
+        cursor.close()
+        return True
+
     def update_account_last_used(self, account_id):
         """Update last_used timestamp for an account"""
         cursor = self.connection.cursor()
@@ -1190,6 +1249,31 @@ class Database:
         result = cursor.fetchone()
         cursor.close()
         return result['delivered_posts'] if result else 0
+
+    # --- NEW: Functions for Daily Quota ---
+    def increment_daily_delivery_count(self, order_id):
+        """Increment daily_delivery_count and set last_delivery_date to today."""
+        cursor = self.connection.cursor()
+        cursor.execute("""
+            UPDATE saas_orders
+            SET daily_delivery_count = daily_delivery_count + 1,
+                last_delivery_date = CURRENT_DATE
+            WHERE id = %s
+        """, (order_id,))
+        cursor.close()
+        return True
+
+    def reset_daily_delivery_count(self, order_id):
+        """Resets the daily counter to 0."""
+        cursor = self.connection.cursor()
+        cursor.execute("""
+            UPDATE saas_orders
+            SET daily_delivery_count = 0,
+                last_delivery_date = CURRENT_DATE
+            WHERE id = %s
+        """, (order_id,))
+        cursor.close()
+        return True
     
     def get_order_by_id(self, order_id):
         """Get order details by ID"""
@@ -1241,7 +1325,7 @@ class Database:
         cursor = self.connection.cursor()
         cursor.execute("""
             SELECT * FROM saas_orders
-            WHERE user_id = %s AND status IN ('completed', 'expired', 'cancelled')
+            WHERE user_id = %s AND status IN ('completed', 'expired', 'cancelled', 'failed')
             ORDER BY created_at DESC
             LIMIT %s
         """, (user_id, limit))
@@ -1249,14 +1333,15 @@ class Database:
         cursor.close()
         return results
     
-    def update_order_delay(self, order_id, delay_seconds):
-        """Update delay_seconds for an order"""
+    def update_order_delay(self, order_id, delay_seconds, drip_feed_hours=0):
+        """Update delay_seconds and drip_feed_hours for an order"""
         cursor = self.connection.cursor()
         cursor.execute("""
             UPDATE saas_orders
-            SET delay_seconds = %s
+            SET delay_seconds = %s,
+                drip_feed_hours = %s
             WHERE id = %s
-        """, (delay_seconds, order_id))
+        """, (delay_seconds, drip_feed_hours, order_id))
         cursor.close()
         return True
     
@@ -1555,14 +1640,19 @@ class Database:
         """Get payment reports by filter type"""
         cursor = self.connection.cursor()
         if filter_type == 'all':
-            query = "SELECT * FROM deposit_requests WHERE status = 'verified' ORDER BY created_at DESC LIMIT 50"
+            query = "SELECT * FROM deposits WHERE status = 'verified' ORDER BY created_at DESC LIMIT 50"
             cursor.execute(query)
         elif filter_type == 'upi':
-            cursor.execute("SELECT * FROM deposit_requests WHERE payment_method = 'upi' AND status = 'verified' ORDER BY created_at DESC LIMIT 50")
+            cursor.execute("SELECT * FROM deposits WHERE payment_method = 'UPI' AND status = 'verified' ORDER BY created_at DESC LIMIT 50")
         elif filter_type == 'promo':
-            cursor.execute("SELECT pc.*, u.username FROM promo_code_usage pcu JOIN promo_codes pc ON pcu.promo_code_id = pc.id JOIN users u ON pcu.user_id = u.user_id ORDER BY pcu.used_at DESC LIMIT 50")
+            cursor.execute("""
+                SELECT pcu.id, pcu.used_at as created_at, pcu.bonus_amount as amount, pcu.code, u.username
+                FROM promo_code_usage pcu 
+                JOIN users u ON pcu.user_id = u.user_id 
+                ORDER BY pcu.used_at DESC LIMIT 50
+            """)
         else:
-            cursor.execute("SELECT * FROM deposit_requests WHERE status = 'verified' ORDER BY created_at DESC LIMIT 50")
+            cursor.execute("SELECT * FROM deposits WHERE status = 'verified' ORDER BY created_at DESC LIMIT 50")
         results = cursor.fetchall()
         cursor.close()
         return results
@@ -1572,18 +1662,22 @@ class Database:
         cursor = self.connection.cursor()
         cursor.execute("""
             SELECT 
-                COALESCE(SUM(CASE WHEN DATE(created_at) = CURRENT_DATE THEN amount ELSE 0 END), 0) as today_deposits,
-                COALESCE(SUM(CASE WHEN DATE(created_at) = CURRENT_DATE THEN price ELSE 0 END), 0) as today_sales,
-                COUNT(CASE WHEN DATE(created_at) = CURRENT_DATE THEN 1 END) as today_orders,
-                COALESCE(SUM(CASE WHEN created_at >= CURRENT_DATE - INTERVAL '7 days' THEN amount ELSE 0 END), 0) as week_deposits,
-                COALESCE(SUM(CASE WHEN created_at >= CURRENT_DATE - INTERVAL '7 days' THEN price ELSE 0 END), 0) as week_sales,
-                COUNT(CASE WHEN created_at >= CURRENT_DATE - INTERVAL '7 days' THEN 1 END) as week_orders,
-                COALESCE(SUM(CASE WHEN created_at >= CURRENT_DATE - INTERVAL '30 days' THEN amount ELSE 0 END), 0) as month_deposits,
-                COALESCE(SUM(CASE WHEN created_at >= CURRENT_DATE - INTERVAL '30 days' THEN price ELSE 0 END), 0) as month_sales,
-                COUNT(CASE WHEN created_at >= CURRENT_DATE - INTERVAL '30 days' THEN 1 END) as month_orders,
-                COALESCE(SUM(price), 0) as lifetime_revenue,
-                COUNT(*) as lifetime_orders
-            FROM saas_orders
+                COALESCE(SUM(CASE WHEN DATE(d.verified_at) = CURRENT_DATE THEN d.amount ELSE 0 END), 0) as today_deposits,
+                COALESCE(SUM(CASE WHEN DATE(so.created_at) = CURRENT_DATE AND so.status <> 'pending_payment' THEN so.price ELSE 0 END), 0) as today_sales,
+                COUNT(CASE WHEN DATE(so.created_at) = CURRENT_DATE THEN 1 END) as today_orders,
+                
+                COALESCE(SUM(CASE WHEN d.verified_at >= CURRENT_DATE - INTERVAL '7 days' THEN d.amount ELSE 0 END), 0) as week_deposits,
+                COALESCE(SUM(CASE WHEN so.created_at >= CURRENT_DATE - INTERVAL '7 days' AND so.status <> 'pending_payment' THEN so.price ELSE 0 END), 0) as week_sales,
+                COUNT(CASE WHEN so.created_at >= CURRENT_DATE - INTERVAL '7 days' THEN 1 END) as week_orders,
+                
+                COALESCE(SUM(CASE WHEN d.verified_at >= CURRENT_DATE - INTERVAL '30 days' THEN d.amount ELSE 0 END), 0) as month_deposits,
+                COALESCE(SUM(CASE WHEN so.created_at >= CURRENT_DATE - INTERVAL '30 days' AND so.status <> 'pending_payment' THEN so.price ELSE 0 END), 0) as month_sales,
+                COUNT(CASE WHEN so.created_at >= CURRENT_DATE - INTERVAL '30 days' THEN 1 END) as month_orders,
+                
+                COALESCE(SUM(CASE WHEN so.status <> 'pending_payment' THEN so.price ELSE 0 END), 0) as lifetime_revenue,
+                COUNT(so.id) as lifetime_orders
+            FROM saas_orders so
+            FULL JOIN deposits d ON so.user_id = d.user_id AND d.status = 'verified'
         """)
         result = cursor.fetchone()
         cursor.close()
@@ -1599,14 +1693,22 @@ class Database:
                 COUNT(CASE WHEN plan_type = 'unlimited_reactions' AND status = 'active' THEN 1 END) as unlimited_reactions,
                 COUNT(CASE WHEN plan_type = 'limited_reactions' AND status = 'active' THEN 1 END) as limited_reactions,
                 COALESCE(SUM(delivered_posts), 0) as total_delivered,
-                COUNT(CASE WHEN status = 'pending' THEN 1 END) as pending_deliveries,
+                COUNT(CASE WHEN status = 'pending_payment' THEN 1 END) as pending_deliveries,
                 COUNT(DISTINCT channel_username) as active_channels
-            FROM saas_orders WHERE status IN ('active', 'pending')
+            FROM saas_orders WHERE status IN ('active', 'pending_payment')
         """)
         result = cursor.fetchone()
-        cursor.execute("SELECT COUNT(*) as active_accounts, COUNT(CASE WHEN join_count < max_joins THEN 1 END) as available_accounts, COUNT(CASE WHEN join_count > 0 THEN 1 END) as accounts_in_use FROM sold_accounts WHERE account_status = 'active' AND is_banned = FALSE")
+        cursor.execute("""
+            SELECT 
+                COUNT(*) as active_accounts, 
+                COUNT(CASE WHEN join_count < max_joins THEN 1 END) as available_accounts, 
+                COUNT(CASE WHEN last_used > NOW() - INTERVAL '24 hours' THEN 1 END) as accounts_in_use 
+            FROM sold_accounts 
+            WHERE account_status = 'active' AND is_banned = FALSE
+        """)
         pool_stats = cursor.fetchone()
-        result.update(pool_stats)
+        if pool_stats:
+            result.update(pool_stats)
         cursor.close()
         return result or {}
     
@@ -1649,9 +1751,8 @@ class Database:
             INSERT INTO admins (user_id, username, role, is_active)
             VALUES (%s, %s, %s, TRUE)
             ON CONFLICT (user_id) DO UPDATE
-            SET is_active = TRUE, role = %s, updated_at = CURRENT_TIMESTAMP
-            RETURNING *
-        """, (user_id, username, role, role))
+            SET is_active = TRUE, role = %s, username = %s
+        """, (user_id, username, role, role, username))
         result = cursor.fetchone()
         cursor.close()
         return result

@@ -1,4 +1,5 @@
 import os
+from dotenv import load_dotenv
 from src.database.database import Database
 from src.database.config import ADMIN_IDS
 
