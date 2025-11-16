@@ -12,10 +12,8 @@ from telegram.ext import (
 )
 from src.database.database import Database
 
-# --- NEW: Import Buyer Bot Token ---
 from src.database.config import BUYER_BOT_TOKEN, ADMIN_IDS
 
-# --- Buyer-specific imports ---
 import src.buyer.buyer_menu as buyer_menu
 import src.buyer.buy_plan as buy_plan
 import src.buyer.deposit_menu as deposit_menu
@@ -24,7 +22,6 @@ import src.buyer.buyer_referral_program as buyer_referral_program
 import src.buyer.buyer_referral_withdrawals as buyer_referral_withdrawals
 import src.buyer.reseller_panel as reseller_panel
 
-# --- Admin-specific imports for Buyer Bot ---
 import src.admin.admin_rate_management as admin_rate_management
 import src.admin.promo_code_management as promo_code_management
 import src.admin.admin_deposit_management as admin_deposit_management
@@ -32,6 +29,7 @@ import src.admin.saas_admin_reports as saas_admin_reports
 import src.admin.broadcast_admin as broadcast_admin
 import src.admin.admin_reseller_management as admin_reseller_management
 import src.utils.account_pool_manager as account_pool_manager
+# DO NOT IMPORT FROM seller_profile
 
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -56,6 +54,35 @@ def get_admin_menu():
     ]
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
 
+async def admin_back_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handles 'Back' buttons in admin menus, shows main admin menu."""
+    query = update.callback_query
+    await query.answer()
+    await query.edit_message_text(
+        "🔑 **Admin Menu**\n\nWelcome back. Select an option:",
+        reply_markup=get_admin_menu()
+    )
+
+# --- NEW: Self-contained support handler ---
+async def buyer_support_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handles the 'Support' button for the buyer bot."""
+    message = """
+💬 **Support**
+
+Need help with your plans or deposits? We're here for you!
+
+**Common Questions:**
+• How long does plan activation take? Instant, after payment.
+• How does Drip-Feed work? We spread your order over the hours you select.
+
+**Contact Admin:**
+For any issues, questions, or concerns, please contact our support team.
+
+**Business Hours:**
+Monday - Sunday: 9 AM - 11 PM (UTC)
+"""
+    await update.message.reply_text(message, parse_mode='Markdown')
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handles the /start command for the buyer bot."""
     user = update.effective_user
@@ -69,7 +96,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         referred_by = None
         if context.args and len(context.args) > 0:
             ref_code = context.args[0]
-            # Check for both seller and buyer referral codes
             if ref_code.startswith('buyref_'):
                 ref_code = ref_code.replace('buyref_', '')
                 
@@ -94,7 +120,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=get_admin_menu()
         )
     else:
-        # Regular users see the buyer menu
         await buyer_menu.show_buyer_menu(update, context)
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -105,7 +130,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
     user_id = update.effective_user.id
     
-    # --- Admin Menu Handling ---
     if db.is_admin(user_id):
         if text == "📊 SaaS Reports":
             await saas_admin_reports.show_saas_reports_menu(update, context)
@@ -123,7 +147,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await broadcast_admin.show_broadcast_menu(update, context)
         elif text == "👑 Admin Mgmt":
             await broadcast_admin.show_admin_management_menu(update, context)
-        # Pass through buyer commands if admin is testing
         elif text == "💎 Buy Plan":
             await buyer_menu.buy_plan(update, context)
         elif text == "💰 Deposit":
@@ -136,8 +159,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await buyer_menu.buyer_referral(update, context)
         elif text == "👔 Reseller Panel":
             await buyer_menu.reseller_panel(update, context)
+        elif text == "💬 Support":
+            await buyer_support_handler(update, context) # FIXED
         else:
-             await update.message.reply_text("Please use the admin menu buttons.")
+             await update.message.reply_text("Please use the admin menu buttons or /start.")
         return
 
     # --- Buyer Menu Handling ---
@@ -154,14 +179,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif text == "👔 Reseller Panel":
         await buyer_menu.reseller_panel(update, context)
     elif text == "💬 Support":
-        # Using seller_profile support as it's generic
-        await seller_profile.handle_support(update, context)
-    elif text == "🔙 Back to Seller Menu":
-        # This button is now obsolete in the two-bot system,
-        # but we handle it just in case.
-        await update.message.reply_text("This is the Buyer Bot. To sell accounts, please use our Seller Bot.")
+        await buyer_support_handler(update, context) # FIXED
+    elif text == "🔙 Back to Buyer Menu":
+        await buyer_menu.show_buyer_menu(update, context)
     else:
-        await update.message.reply_text("Please use the menu buttons to navigate.")
+        await update.message.reply_text("Please use the menu buttons or /start.")
 
 
 def main():
@@ -205,7 +227,6 @@ def main():
     # --- Command Handlers ---
     application.add_handler(CommandHandler("start", start))
     
-    # Buyer Admin Commands
     application.add_handler(CommandHandler("accounts", account_pool_manager.accounts_command))
     application.add_handler(CommandHandler("removeaccount", account_pool_manager.remove_account_command))
     application.add_handler(CommandHandler("verifydep", admin_deposit_management.verify_deposit_command))
@@ -217,6 +238,9 @@ def main():
     application.add_handler(CommandHandler("resellermgmt", admin_reseller_management.reseller_management_menu))
 
     # --- Callback Handlers ---
+    application.add_handler(CallbackQueryHandler(admin_back_handler, pattern="^admin_back_from_rates$"))
+    application.add_handler(CallbackQueryHandler(admin_back_handler, pattern="^admin_back$"))
+    
     application.add_handler(CallbackQueryHandler(saas_admin_reports.show_saas_reports_menu, pattern="^saas_reports$"))
     application.add_handler(CallbackQueryHandler(saas_admin_reports.show_payment_reports, pattern="^saas_payments$"))
     application.add_handler(CallbackQueryHandler(saas_admin_reports.show_payment_details, pattern="^payments_"))
@@ -230,14 +254,14 @@ def main():
     application.add_handler(CallbackQueryHandler(broadcast_admin.view_admin_logs, pattern="^admin_logs$"))
     
     application.add_handler(CallbackQueryHandler(admin_rate_management.show_rate_management, pattern="^show_rates$"))
-    application.add_handler(CallbackQueryHandler(buy_plan.show_plan_types, pattern="^buyer_back$"))
+    application.add_handler(CallbackQueryHandler(buyer_menu.show_buyer_menu, pattern="^buyer_back$"))
     
+    application.add_handler(CallbackQueryHandler(plan_management.back_to_plans, pattern="^plans_back$"))
     application.add_handler(CallbackQueryHandler(plan_management.view_plan_details, pattern="^plan_view_"))
     application.add_handler(CallbackQueryHandler(plan_management.renew_plan, pattern="^plan_renew_"))
     application.add_handler(CallbackQueryHandler(plan_management.cancel_plan, pattern="^plan_cancel_"))
     application.add_handler(CallbackQueryHandler(plan_management.confirm_cancel_plan, pattern="^confirm_cancel_"))
-
-    # --- Message Handler ---
+    
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     
     logger.info("Buyer Bot (Bot 2) started successfully!")

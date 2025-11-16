@@ -1,13 +1,21 @@
 import asyncio
 import logging
+import os
 from telethon import TelegramClient
 from telethon.sessions import StringSession
-from telethon.errors import ChannelPrivateError, UserBannedInChannelError, FloodWaitError, InviteHashExpiredError
-from telethon.tl.functions.channels import JoinChannelRequest
+from telethon.errors import (
+    ChannelPrivateError,
+    UserBannedInChannelError,
+    FloodWaitError,
+    InviteHashExpiredError,
+)
+from telethon.tl.functions.channels import JoinChannelRequest, LeaveChannelRequest
+from telethon.tl.functions.messages import ImportChatInviteRequest
 from src.database.database import Database
 from src.database.config import TELEGRAM_API_ID, TELEGRAM_API_HASH
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date
 import time
+import random
 
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -15,306 +23,446 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+
 class ServiceDeliveryWorker:
     def __init__(self):
         self.db = Database()
-        self.active_channels = {}
+        self.active_channels = {} # Stores standard, daily-monitoring plans
         self.active_clients = {}
         self.monitored_orders = set()
-        
+
     async def create_client_from_session(self, account_id, session_string):
         """Create a Telethon client from a session string"""
         try:
+            session_path = f"sessions/account_{account_id}.session"
             client = TelegramClient(
-                StringSession(session_string),
+                session_path,
                 TELEGRAM_API_ID,
                 TELEGRAM_API_HASH
             )
             await client.connect()
             
             if not await client.is_user_authorized():
-                logger.error(f"Account {account_id} session is not authorized")
-                return None
+                logger.warning(f"File session for {account_id} failed. Trying StringSession.")
+                client = TelegramClient(
+                    StringSession(session_string),
+                    TELEGRAM_API_ID,
+                    TELEGRAM_API_HASH
+                )
+                await client.connect()
+                
+                if not await client.is_user_authorized():
+                    logger.error(f"Account {account_id} session is not authorized")
+                    self.db.update_account_status(account_id, 'banned', is_banned=True)
+                    return None
             
+            if not os.path.exists('sessions'):
+                os.makedirs('sessions')
+            if not os.path.exists(session_path):
+                 with open(session_path, 'w') as f:
+                    f.write(client.session.save())
+
             return client
         except Exception as e:
             logger.error(f"Error creating client for account {account_id}: {e}")
             return None
-    
+
+    async def get_client_for_account(self, account):
+        """Gets a client, creating one if not already active."""
+        account_id = account['id']
+        session_string = account['session_string']
+
+        if account_id in self.active_clients:
+            client = self.active_clients[account_id]
+            try:
+                if client.is_connected() or await client.connect():
+                    if await client.is_user_authorized():
+                        return client
+            except Exception as e:
+                logger.error(f"Reconnecting client {account_id} failed: {e}")
+
+        client = await self.create_client_from_session(account_id, session_string)
+        if client:
+            self.active_clients[account_id] = client
+        return client
+
     async def join_channel(self, client, account_id, channel_username, order_id):
         """Make an account join a channel (public or private)"""
         try:
-            channel_username = channel_username.strip().replace('@', '')
-            if channel_username.startswith('https://') or channel_username.startswith('t.me/'):
-                channel_username = channel_username.split('/')[-1]
+            entity = None
+            log_action = 'channel_join'
             
-            try:
-                entity = await client.get_entity(channel_username)
-                
+            if 'joinchat/' in channel_username or 't.me/+' in channel_username:
+                hash_code = channel_username.split('/')[-1].replace('+', '')
+                updates = await client(ImportChatInviteRequest(hash_code))
+                entity = updates.chats[0]
+                log_action = 'private_channel_join'
+            else:
+                channel_username_clean = channel_username.replace('@', '')
+                entity = await client.get_entity(channel_username_clean)
                 await client(JoinChannelRequest(entity))
-                
-                self.db.increment_account_join_count(account_id)
-                self.db.log_account_usage(
-                    account_id, order_id, channel_username, 
-                    'channel_join', success=True
-                )
-                
-                logger.info(f"Account {account_id} successfully joined channel {channel_username}")
-                return True
-                
-            except ChannelPrivateError:
-                logger.warning(f"Channel {channel_username} is private, sending join request")
-                try:
-                    entity = await client.get_entity(channel_username)
-                    await client(JoinChannelRequest(entity))
-                    
-                    self.db.log_account_usage(
-                        account_id, order_id, channel_username,
-                        'private_channel_join_request', success=True
-                    )
-                    logger.info(f"Account {account_id} sent join request to private channel {channel_username}")
-                    return True
-                except Exception as e:
-                    logger.error(f"Error requesting to join private channel {channel_username}: {e}")
-                    return False
+            
+            self.db.increment_account_join_count(account_id)
+            self.db.log_account_usage(
+                account_id, order_id, channel_username, 
+                log_action, success=True
+            )
+            logger.info(f"Account {account_id} successfully joined channel {channel_username}")
+            return entity
                     
         except UserBannedInChannelError:
             logger.error(f"Account {account_id} is banned in channel {channel_username}")
             self.db.update_account_status(account_id, 'banned', is_banned=True)
-            self.db.log_account_usage(
-                account_id, order_id, channel_username,
-                'channel_join', success=False, error_message='Account banned in channel'
-            )
-            return False
-            
+            return None
+        except (ValueError, InviteHashExpiredError):
+             logger.error(f"Order #{order_id}: Invalid or expired invite link {channel_username}")
+             return None
         except FloodWaitError as e:
             logger.warning(f"Flood wait error for account {account_id}: must wait {e.seconds} seconds")
-            self.db.log_account_usage(
-                account_id, order_id, channel_username,
-                'channel_join', success=False, error_message=f'Flood wait: {e.seconds}s'
-            )
             await asyncio.sleep(e.seconds)
-            return False
+            return None
+        except Exception as e:
+            if "already a participant" in str(e).lower():
+                logger.warning(f"Account {account_id} already in channel {channel_username}")
+                try:
+                    if 'joinchat/' in channel_username or 't.me/+' in channel_username:
+                        return True # It's a private channel, we can't just get_entity
+                    return await client.get_entity(channel_username.replace('@',''))
+                except Exception:
+                    return True # Fallback for private
+            logger.error(f"Error joining channel {channel_username} with account {account_id}: {e}")
+            return None
+
+    async def execute_join_and_leave_order(self, order):
+        """
+        Handles the entire lifecycle of a one-time "Join & Leave" order.
+        """
+        order_id = order['id']
+        plan_type = order['plan_type']
+        channel_username = order['channel_username']
+        post_count = order['total_posts'] # e.g., 5 posts
+        quantity = order['views_per_post'] # e.g., 100 views per post
+        delay_seconds = order.get('delay_seconds', 1)
+        is_reaction = 'react' in plan_type
+        
+        logger.info(f"Executing NEW Join & Leave Order #{order_id} for {channel_username}")
+        
+        channel_entity = None
+        clients_in_job = {}
+        try:
+            available_accounts = self.db.get_available_accounts(limit=quantity)
+            if len(available_accounts) == 0:
+                logger.error(f"Order #{order_id}: No accounts available in pool. Need {quantity}. Aborting.")
+                self.db.update_order_status(order_id, 'failed')
+                return
+                
+            if len(available_accounts) < quantity:
+                logger.warning(f"Order #{order_id}: Not enough accounts. Need {quantity}, have {len(available_accounts)}")
+            
+            monitor_client = None
+
+            # 1. Join Channel with all accounts
+            logger.info(f"Order #{order_id}: Joining channel with {len(available_accounts)} accounts...")
+            joined_count = 0
+            for account in available_accounts:
+                client = await self.get_client_for_account(account)
+                if not client:
+                    continue
+                
+                if not monitor_client:
+                    monitor_client = client
+
+                entity = await self.join_channel(client, account['id'], channel_username, order_id)
+                if entity:
+                    clients_in_job[account['id']] = client
+                    joined_count += 1
+                    if not channel_entity:
+                        channel_entity = entity
+                
+                await asyncio.sleep(random.uniform(1, 3)) # Stagger joins
+
+            if joined_count == 0 or not monitor_client or not channel_entity:
+                logger.error(f"Order #{order_id}: No accounts could join channel {channel_username}. Aborting.")
+                self.db.update_order_status(order_id, 'failed')
+                return
+
+            logger.info(f"Order #{order_id}: Successfully joined with {joined_count} accounts. Getting posts...")
+
+            # 2. Get Recent Posts
+            messages = await monitor_client.get_messages(channel_entity, limit=post_count)
+
+            if not messages:
+                logger.warning(f"Order #{order_id}: No posts found in channel {channel_username}.")
+            else:
+                logger.info(f"Order #{order_id}: Found {len(messages)} posts to service.")
+                
+                # 3. Deliver Service to each post
+                reactions_list = ['👍', '❤️', '🔥', '👏', '😍', '🎉', '🤩']
+                
+                for post in messages:
+                    logger.info(f"Order #{order_id}: Servicing post {post.id}...")
+                    delivered_count = 0
+                    
+                    for account_id, client in clients_in_job.items():
+                        try:
+                            if is_reaction:
+                                reaction = random.choice(reactions_list)
+                                await client.send_reaction(post.chat_id, post.id, reaction)
+                                action_type = 'reaction_delivery'
+                            else:
+                                await client.send_read_acknowledge(post.chat_id, post.id)
+                                action_type = 'view_delivery'
+                            
+                            self.db.log_account_usage(account_id, order_id, channel_username, action_type, True)
+                            delivered_count += 1
+                            # --- DRIP-FEED ---
+                            await asyncio.sleep(delay_seconds)
+                        
+                        except Exception as e:
+                            logger.warning(f"Order #{order_id}: Account {account_id} failed to service post {post.id}: {e}")
+
+                    logger.info(f"Order #{order_id}: Delivered {delivered_count} services to post {post.id}")
+                    self.db.increment_delivered_posts(order_id)
+                    await asyncio.sleep(random.uniform(3, 10)) # Wait between posts
+
+            # 4. Leave Channel with all accounts
+            logger.info(f"Order #{order_id}: Service complete. Leaving channel...")
+            for account_id, client in clients_in_job.items():
+                try:
+                    await client(LeaveChannelRequest(channel_entity))
+                    self.db.log_account_usage(account_id, order_id, channel_username, 'channel_leave', True)
+                    self.db.decrement_account_join_count(account_id)
+                except Exception as e:
+                    logger.error(f"Order #{order_id}: Account {account_id} failed to leave: {e}")
+
+            # 5. Mark Order as Completed
+            self.db.update_order_status(order_id, 'completed')
+            logger.info(f"🎉 Order #{order_id} (Join & Leave) is marked as COMPLETED.")
             
         except Exception as e:
-            logger.error(f"Error joining channel {channel_username} with account {account_id}: {e}")
-            self.db.log_account_usage(
-                account_id, order_id, channel_username,
-                'channel_join', success=False, error_message=str(e)
-            )
-            return False
-    
-    async def join_channel_with_accounts(self, channel_username, order_id, num_accounts):
-        """Join a channel with multiple accounts from the pool"""
-        available_accounts = self.db.get_available_accounts(limit=num_accounts)
-        
-        if len(available_accounts) < num_accounts:
-            logger.warning(f"Only {len(available_accounts)} available accounts, need {num_accounts}")
-        
-        join_tasks = []
-        successful_joins = 0
-        
-        for account in available_accounts[:num_accounts]:
-            account_id = account['id']
-            session_string = account['session_string']
-            
-            try:
-                client = await self.create_client_from_session(account_id, session_string)
-                
-                if client:
-                    self.active_clients[account_id] = client
-                    success = await self.join_channel(client, account_id, channel_username, order_id)
-                    
-                    if success:
-                        successful_joins += 1
-                    
-                    await asyncio.sleep(2)
-                    
-            except Exception as e:
-                logger.error(f"Error processing account {account_id}: {e}")
-                continue
-        
-        logger.info(f"Joined channel {channel_username} with {successful_joins}/{num_accounts} accounts")
-        return successful_joins
-    
+            logger.error(f"CRITICAL: Failed to execute Join & Leave Order #{order_id}: {e}")
+            self.db.update_order_status(order_id, 'failed')
+        finally:
+            # Disconnect all clients used in this job
+            for account_id, client in clients_in_job.items():
+                if client and client.is_connected():
+                    await client.disconnect()
+                if account_id in self.active_clients:
+                    del self.active_clients[account_id]
+
+
     async def process_new_orders(self):
-        """Check for new active orders and join their channels"""
+        """Check for new active orders"""
         active_orders = self.db.get_active_orders()
         
         for order in active_orders:
             order_id = order['id']
-            
+            plan_type = order['plan_type']
+
             if order_id in self.monitored_orders:
                 continue
+
+            # --- ROUTING LOGIC ---
+            if 'join' in plan_type or order['duration'] == 0:
+                logger.info(f"Found new Join & Leave order #{order_id}. Starting one-time job.")
+                self.monitored_orders.add(order_id)
+                asyncio.create_task(self.execute_join_and_leave_order(order))
             
-            channel_username = order['channel_username']
-            views_per_post = order['views_per_post']
+            elif order['duration'] > 0:
+                channel_username = order['channel_username']
+                logger.info(f"New active Standard order {order_id} detected for channel {channel_username}")
+                
+                account = next(iter(self.db.get_available_accounts(limit=1)), None)
+                if not account:
+                    logger.error(f"Order #{order_id}: No accounts available in pool to monitor channel. Skipping.")
+                    continue
+                
+                client = await self.get_client_for_account(account)
+                if not client:
+                    logger.error(f"Order #{order_id}: Could not create client for monitoring. Skipping.")
+                    continue
+                
+                entity = await self.join_channel(client, account['id'], channel_username, order_id)
+                
+                if entity:
+                    self.monitored_orders.add(order_id)
+                    if channel_username not in self.active_channels:
+                        self.active_channels[channel_username] = []
+                    self.active_channels[channel_username].append(order)
+                    
+                    if not order.get('expires_at'):
+                        duration_days = order.get('duration', 30)
+                        expires_at = datetime.now() + timedelta(days=duration_days)
+                        self.db.update_order_expiry(order_id, expires_at)
+                else:
+                    logger.warning(f"Order #{order_id}: Failed to join channel {channel_username} for monitoring.")
             
-            logger.info(f"New active order {order_id} detected for channel {channel_username}")
-            
-            await self.join_channel_with_accounts(channel_username, order_id, views_per_post)
-            
-            self.monitored_orders.add(order_id)
-            self.active_channels[channel_username] = order
-            
-            if not order.get('expires_at'):
-                duration_days = order.get('duration', 30)
-                expires_at = datetime.now() + timedelta(days=duration_days)
-                self.db.update_order_expiry(order_id, expires_at)
-                logger.info(f"Set expiry for order {order_id} to {expires_at}")
-    
-    async def deliver_views(self, message, order, delay_seconds=10):
-        """Deliver views to a message"""
+            else:
+                logger.error(f"Order #{order_id}: Unknown plan type. Skipping.")
+                self.monitored_orders.add(order_id)
+
+    async def deliver_views(self, message, order):
+        """Deliver views to a message for a standard plan"""
         account_count = order['views_per_post']
+        delay_seconds = order.get('delay_seconds', 10) # Drip-Feed
         available_accounts = self.db.get_available_accounts(limit=account_count)
         
-        if len(available_accounts) < account_count:
-            logger.warning(f"Only {len(available_accounts)} accounts available for order {order['id']}, need {account_count}")
-        
-        successful_views = 0
+        logger.info(f"Order #{order['id']}: Delivering {len(available_accounts)} views to post {message.id}...")
         
         for account in available_accounts:
-            account_id = account['id']
-            session_string = account['session_string']
+            client = await self.get_client_for_account(account)
+            if not client:
+                continue
             
             try:
-                if account_id not in self.active_clients:
-                    client = await self.create_client_from_session(account_id, session_string)
-                    if client:
-                        self.active_clients[account_id] = client
-                    else:
-                        continue
-                else:
-                    client = self.active_clients[account_id]
-                
+                await self.join_channel(client, account['id'], order['channel_username'], order['id'])
                 await client.send_read_acknowledge(message.chat_id, message.id)
-                
-                self.db.update_account_last_used(account_id)
-                self.db.log_account_usage(
-                    account_id, order['id'], order['channel_username'],
-                    'view_delivery', success=True
-                )
-                successful_views += 1
-                
-                await asyncio.sleep(delay_seconds)
+                self.db.update_account_last_used(account['id'])
+                self.db.log_account_usage(account['id'], order['id'], order['channel_username'], 'view_delivery', True)
+                await asyncio.sleep(delay_seconds) # --- DRIP-FEED ---
                 
             except Exception as e:
-                logger.error(f"Error delivering view with account {account_id}: {e}")
-                self.db.log_account_usage(
-                    account_id, order['id'], order['channel_username'],
-                    'view_delivery', success=False, error_message=str(e)
-                )
-                continue
-        
-        logger.info(f"Delivered {successful_views} views for message {message.id} in {order['channel_username']}")
-        return successful_views
-    
-    async def deliver_reactions(self, message, order, delay_seconds=10):
-        """Deliver reactions to a message"""
+                logger.error(f"Error delivering view with account {account['id']}: {e}")
+
+    async def deliver_reactions(self, message, order):
+        """Deliver reactions to a message for a standard plan"""
         account_count = order['views_per_post']
+        delay_seconds = order.get('delay_seconds', 10) # Drip-Feed
         available_accounts = self.db.get_available_accounts(limit=account_count)
         
-        if len(available_accounts) < account_count:
-            logger.warning(f"Only {len(available_accounts)} accounts available for order {order['id']}, need {account_count}")
-        
-        successful_reactions = 0
+        logger.info(f"Order #{order['id']}: Delivering {len(available_accounts)} reactions to post {message.id}...")
         reactions = ['👍', '❤️', '🔥', '👏', '😍']
         
         for idx, account in enumerate(available_accounts):
-            account_id = account['id']
-            session_string = account['session_string']
-            
-            try:
-                if account_id not in self.active_clients:
-                    client = await self.create_client_from_session(account_id, session_string)
-                    if client:
-                        self.active_clients[account_id] = client
-                    else:
-                        continue
-                else:
-                    client = self.active_clients[account_id]
+            client = await self.get_client_for_account(account)
+            if not client:
+                continue
                 
+            try:
+                await self.join_channel(client, account['id'], order['channel_username'], order['id'])
                 reaction = reactions[idx % len(reactions)]
                 await client.send_reaction(message.chat_id, message.id, reaction)
-                
-                self.db.update_account_last_used(account_id)
-                self.db.log_account_usage(
-                    account_id, order['id'], order['channel_username'],
-                    'reaction_delivery', success=True
-                )
-                successful_reactions += 1
-                
-                await asyncio.sleep(delay_seconds)
+                self.db.update_account_last_used(account['id'])
+                self.db.log_account_usage(account['id'], order['id'], order['channel_username'], 'reaction_delivery', True)
+                await asyncio.sleep(delay_seconds) # --- DRIP-FEED ---
                 
             except Exception as e:
-                logger.error(f"Error delivering reaction with account {account_id}: {e}")
-                self.db.log_account_usage(
-                    account_id, order['id'], order['channel_username'],
-                    'reaction_delivery', success=False, error_message=str(e)
-                )
-                continue
+                logger.error(f"Error delivering reaction with account {account['id']}: {e}")
         
-        logger.info(f"Delivered {successful_reactions} reactions for message {message.id} in {order['channel_username']}")
-        return successful_reactions
-    
     async def should_deliver_for_limited_plan(self, order):
-        """Check if we should deliver for a limited plan based on daily quota"""
-        total_posts = order['total_posts']
-        delivered_posts = order.get('delivered_posts', 0)
+        """
+        Check if we should deliver for a standard limited plan
+        based on TOTAL plan quota and DAILY plan quota.
+        """
+        order_id = order['id']
         
-        if delivered_posts >= total_posts:
-            logger.info(f"Order {order['id']} has reached daily post limit ({delivered_posts}/{total_posts})")
+        # 1. Check TOTAL plan quota
+        total_posts_for_plan = order['total_posts'] # e.g., 35 total
+        delivered_posts_total = order.get('delivered_posts', 0)
+        
+        if delivered_posts_total >= total_posts_for_plan:
+            logger.info(f"Order {order_id} has reached its TOTAL post limit ({delivered_posts_total}/{total_posts_for_plan})")
+            self.db.update_order_status(order_id, 'completed')
             return False
+            
+        # 2. Check DAILY plan quota
+        daily_posts_limit = order['daily_posts_limit']
+        daily_delivery_count = order.get('daily_delivery_count', 0)
+        last_delivery_date = order.get('last_delivery_date')
+        today = date.today()
+
+        # If it's a new day, reset the daily counter
+        if last_delivery_date is None or last_delivery_date != today:
+            logger.info(f"Order {order_id}: New day. Resetting daily delivery count to 0.")
+            self.db.reset_daily_delivery_count(order_id)
+            daily_delivery_count = 0
         
+        if daily_delivery_count >= daily_posts_limit:
+            logger.info(f"Order {order_id} has reached its DAILY post limit for {today} ({daily_delivery_count}/{daily_posts_limit})")
+            return False
+            
         return True
     
-    async def process_new_message(self, message, order):
-        """Process a new message/post for an order"""
+    async def process_new_message_for_standard_plan(self, message, order):
+        """Process a new message/post for a standard plan"""
         plan_type = order['plan_type']
-        delay_seconds = order.get('delay_seconds', 10)
+        order_id = order['id']
         
-        logger.info(f"Processing new message {message.id} in {order['channel_username']} for order {order['id']}")
+        logger.info(f"Processing new message {message.id} in {order['channel_username']} for STANDARD order {order_id}")
         
-        if 'unlimited_views' in plan_type:
-            await self.deliver_views(message, order, delay_seconds)
+        if 'unlimited' in plan_type:
+            # Unlimited plans have no daily post limit
+            if 'view' in plan_type:
+                await self.deliver_views(message, order)
+            else:
+                await self.deliver_reactions(message, order)
+            self.db.increment_delivered_posts(order_id) # Track total posts for stats
             
-        elif 'limited_views' in plan_type:
+        elif 'limited' in plan_type:
+            # Limited plans must check daily and total quotas
             if await self.should_deliver_for_limited_plan(order):
-                await self.deliver_views(message, order, delay_seconds)
-                new_count = self.db.increment_delivered_posts(order['id'])
-                order['delivered_posts'] = new_count
-            
-        elif 'unlimited_reactions' in plan_type:
-            await self.deliver_reactions(message, order, delay_seconds)
-            
-        elif 'limited_reactions' in plan_type:
-            if await self.should_deliver_for_limited_plan(order):
-                await self.deliver_reactions(message, order, delay_seconds)
-                new_count = self.db.increment_delivered_posts(order['id'])
-                order['delivered_posts'] = new_count
+                if 'view' in plan_type:
+                    await self.deliver_views(message, order)
+                else:
+                    await self.deliver_reactions(message, order)
+                
+                # Increment both total and daily counters
+                self.db.increment_delivered_posts(order_id)
+                self.db.increment_daily_delivery_count(order_id)
     
     async def monitor_channel(self, channel_username, orders):
         """Monitor a specific channel for new posts and deliver services"""
         logger.info(f"Starting to monitor channel: {channel_username}")
         
+        client_to_use = None
+        entity = None
         try:
-            if not self.active_clients:
-                logger.error("No active clients available for monitoring")
+            for order in orders:
+                log = self.db.connection.cursor()
+                log.execute("""
+                    SELECT sa.id, sa.session_string FROM account_usage_logs aul
+                    JOIN sold_accounts sa ON aul.account_id = sa.id
+                    WHERE aul.order_id = %s AND (aul.action_type LIKE '%%join%%' OR aul.action_type = 'view_delivery')
+                    LIMIT 1
+                """, (order['id'],))
+                account = log.fetchone()
+                log.close()
+                
+                if account:
+                    client_to_use = await self.get_client_for_account(account)
+                    if client_to_use:
+                        try:
+                            if 'joinchat/' in channel_username or 't.me/+' in channel_username:
+                                entity = await client_to_use.get_entity(channel_username)
+                            else:
+                                entity = await client_to_use.get_entity(channel_username.replace('@',''))
+                            
+                            if entity:
+                                break
+                        except Exception as e:
+                            logger.warning(f"Monitor client setup for {channel_username} failed with one account, trying next. Error: {e}")
+            
+            if not client_to_use or not entity:
+                logger.error(f"No active clients/entity available to monitor {channel_username}. Will retry.")
+                if channel_username in self.active_channels:
+                    del self.active_channels[channel_username]
+                self.monitored_orders = {o_id for o_id in self.monitored_orders if self.db.get_order_by_id(o_id)['channel_username'] != channel_username}
                 return
-            
-            monitor_client = list(self.active_clients.values())[0]
-            
-            entity = await monitor_client.get_entity(channel_username)
-            
+
             from telethon import events
             
-            @monitor_client.on(events.NewMessage(chats=entity))
+            @client_to_use.on(events.NewMessage(chats=entity))
             async def handle_new_message(event):
                 message = event.message
+                active_orders_for_channel = self.active_channels.get(channel_username, [])
                 
-                for order in orders:
+                for order in active_orders_for_channel:
                     try:
-                        await self.process_new_message(message, order)
+                        fresh_order = self.db.get_order_by_id(order['id'])
+                        if not fresh_order or fresh_order['status'] != 'active':
+                            continue
+                        
+                        await self.process_new_message_for_standard_plan(message, fresh_order)
                     except Exception as e:
                         logger.error(f"Error processing message for order {order['id']}: {e}")
             
@@ -322,24 +470,25 @@ class ServiceDeliveryWorker:
             
         except Exception as e:
             logger.error(f"Error setting up monitoring for channel {channel_username}: {e}")
-    
-    async def check_expired_orders(self):
-        """Check for expired orders (Phase 8.4)"""
-        logger.info("Expiry checking will be implemented in Phase 8.4")
-        pass
+            if channel_username in self.active_channels:
+                del self.active_channels[channel_username]
+            self.monitored_orders = {o_id for o_id in self.monitored_orders if self.db.get_order_by_id(o_id)['channel_username'] != channel_username}
     
     async def run(self):
         """Main worker loop"""
         logger.info("Service Delivery Worker started")
         
+        monitored_channels = set()
+        
         while True:
             try:
                 await self.process_new_orders()
                 
-                for channel_username, orders in self.active_channels.items():
-                    if isinstance(orders, dict):
-                        orders = [orders]
-                    await self.monitor_channel(channel_username, orders)
+                for channel_username in list(self.active_channels.keys()):
+                    if channel_username not in monitored_channels:
+                        orders = self.active_channels[channel_username]
+                        asyncio.create_task(self.monitor_channel(channel_username, orders))
+                        monitored_channels.add(channel_username)
                 
                 await asyncio.sleep(30)
                 
@@ -352,12 +501,16 @@ class ServiceDeliveryWorker:
         logger.info("Cleaning up worker...")
         for account_id, client in self.active_clients.items():
             try:
-                await client.disconnect()
+                if client.is_connected():
+                    await client.disconnect()
             except:
                 pass
         logger.info("Worker cleanup complete")
 
 async def main():
+    if not os.path.exists('sessions'):
+        os.makedirs('sessions')
+        
     worker = ServiceDeliveryWorker()
     try:
         await worker.run()

@@ -21,6 +21,7 @@ from telethon.sessions import StringSession
 from src.database.database import Database
 from src.database.config import TELEGRAM_API_ID, TELEGRAM_API_HASH
 import re
+from datetime import datetime, timedelta
 
 logger = logging.getLogger(__name__)
 
@@ -86,6 +87,7 @@ async def receive_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     context.user_data['phone'] = phone
     
+    client = None
     try:
         api_id = int(TELEGRAM_API_ID)
         api_hash = str(TELEGRAM_API_HASH)
@@ -100,10 +102,9 @@ async def receive_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         result = await client.send_code_request(phone)
         
-        session_string = client.session.save()
-        context.user_data['session_string'] = session_string
+        # Save the session string and hash, NOT the client object
+        context.user_data['session_string'] = client.session.save()
         context.user_data['phone_code_hash'] = result.phone_code_hash
-        context.user_data['telethon_client'] = client
         
         logger.info(f"Code sent successfully for {phone}")
         
@@ -117,10 +118,6 @@ async def receive_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"📱 **Important:** Check your Telegram app!\n"
             f"The code should appear in a chat from \"Telegram\" (official)\n\n"
             f"📞 Phone: {phone}\n\n"
-            f"⏰ If you don't see it within 2 minutes:\n"
-            f"   • Check the \"Telegram\" chat in your app\n"
-            f"   • Check your SMS messages\n"
-            f"   • Use the Resend button below\n\n"
             f"📨 Enter the 5-digit code below:",
             reply_markup=keyboard,
             parse_mode='Markdown'
@@ -128,7 +125,6 @@ async def receive_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return CODE
         
     except FloodWaitError as e:
-        await cleanup_client(context)
         await update.message.reply_text(
             f"❌ Too many requests. Please wait {e.seconds} seconds and try again.",
             reply_markup=get_cancel_keyboard()
@@ -136,7 +132,6 @@ async def receive_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return ConversationHandler.END
         
     except PhoneNumberInvalidError:
-        await cleanup_client(context)
         await update.message.reply_text(
             "❌ Invalid phone number. Please try again with a valid number.",
             reply_markup=get_cancel_keyboard()
@@ -144,44 +139,39 @@ async def receive_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return PHONE
         
     except Exception as e:
-        await cleanup_client(context)
         logger.error(f"Error sending code to {phone}: {e}")
         await update.message.reply_text(
-            "❌ An error occurred while sending the verification code.\n\n"
-            "**Error details:** Unable to connect to Telegram servers\n\n"
+            "❌ An error occurred while sending the verification code.\n"
             "Please try again later or contact support.",
             reply_markup=get_cancel_keyboard(),
             parse_mode='Markdown'
         )
         return ConversationHandler.END
+    finally:
+        if client and client.is_connected():
+            await client.disconnect()
 
 async def resend_code_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     
     phone = context.user_data.get('phone')
-    client = context.user_data.get('telethon_client')
     
     if not phone:
         await query.edit_message_text("❌ Session expired. Please start over.")
         return ConversationHandler.END
     
+    client = None
     try:
-        if not client or not client.is_connected():
-            api_id = int(TELEGRAM_API_ID)
-            api_hash = str(TELEGRAM_API_HASH)
-            
-            if client:
-                await cleanup_client(context)
-            
-            client = TelegramClient(StringSession(), api_id, api_hash)
-            await client.connect()
-            context.user_data['telethon_client'] = client
+        api_id = int(TELEGRAM_API_ID)
+        api_hash = str(TELEGRAM_API_HASH)
+        
+        client = TelegramClient(StringSession(), api_id, api_hash)
+        await client.connect()
         
         result = await client.send_code_request(phone)
         
-        session_string = client.session.save()
-        context.user_data['session_string'] = session_string
+        context.user_data['session_string'] = client.session.save()
         context.user_data['phone_code_hash'] = result.phone_code_hash
         
         keyboard = InlineKeyboardMarkup([
@@ -205,6 +195,9 @@ async def resend_code_callback(update: Update, context: ContextTypes.DEFAULT_TYP
             reply_markup=get_cancel_keyboard()
         )
         return ConversationHandler.END
+    finally:
+        if client and client.is_connected():
+            await client.disconnect()
 
 async def receive_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
     code = update.message.text.strip().replace('-', '').replace(' ', '')
@@ -218,13 +211,19 @@ async def receive_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     phone = context.user_data.get('phone')
     phone_code_hash = context.user_data.get('phone_code_hash')
-    client = context.user_data.get('telethon_client')
+    session_string = context.user_data.get('session_string')
     
-    if not client or not phone or not phone_code_hash:
+    if not phone or not phone_code_hash or not session_string:
         await update.message.reply_text("❌ Session expired. Please start over.")
         return ConversationHandler.END
     
+    client = None
     try:
+        api_id = int(TELEGRAM_API_ID)
+        api_hash = str(TELEGRAM_API_HASH)
+        client = TelegramClient(StringSession(session_string), api_id, api_hash)
+        await client.connect()
+
         await client.sign_in(phone=phone, code=code, phone_code_hash=phone_code_hash)
         
         final_session_string = client.session.save()
@@ -237,15 +236,17 @@ async def receive_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "⏳ Processing your account..."
         )
         
+        context.user_data['telethon_client'] = client 
         result = await process_account(update, context)
         return result
         
     except SessionPasswordNeededError:
+        context.user_data['session_string'] = client.session.save()
+        
         await update.message.reply_text(
             "🔐 **2FA Enabled**\n\n"
-            "Your account has Two-Factor Authentication enabled.\n"
             "Please send your 2FA password.\n\n"
-            "⚠️ **Note:** Your password will be deleted immediately after sending for security.",
+            "⚠️ **Note:** Your password will be deleted immediately after sending.",
             reply_markup=get_cancel_keyboard(),
             parse_mode='Markdown'
         )
@@ -262,25 +263,33 @@ async def receive_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.error(f"Error during sign in: {e}")
         await update.message.reply_text(
             "❌ An error occurred during verification.\n\n"
-            "**Error:** Unable to verify code\n\n"
+            f"**Error:** Unable to verify code.\n\n"
             "Please try again or contact support.",
             reply_markup=get_cancel_keyboard(),
             parse_mode='Markdown'
         )
         return ConversationHandler.END
+    finally:
+        if 'telethon_client' not in context.user_data and client and client.is_connected():
+             await client.disconnect()
 
 async def receive_password(update: Update, context: ContextTypes.DEFAULT_TYPE):
     password = update.message.text.strip()
     
     await update.message.delete()
     
-    client = context.user_data.get('telethon_client')
-    
-    if not client:
+    session_string = context.user_data.get('session_string')
+    if not session_string:
         await update.message.reply_text("❌ Session expired. Please start over.")
         return ConversationHandler.END
     
+    client = None
     try:
+        api_id = int(TELEGRAM_API_ID)
+        api_hash = str(TELEGRAM_API_HASH)
+        client = TelegramClient(StringSession(session_string), api_id, api_hash)
+        await client.connect()
+
         await client.sign_in(password=password)
         
         session_string = client.session.save()
@@ -292,6 +301,7 @@ async def receive_password(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "⏳ Processing your account..."
         )
         
+        context.user_data['telethon_client'] = client
         result = await process_account(update, context)
         return result
         
@@ -309,6 +319,9 @@ async def receive_password(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=get_cancel_keyboard()
         )
         return ConversationHandler.END
+    finally:
+        if 'telethon_client' not in context.user_data and client and client.is_connected():
+             await client.disconnect()
 
 async def process_account(update: Update, context: ContextTypes.DEFAULT_TYPE):
     client = context.user_data.get('telethon_client')
@@ -316,22 +329,12 @@ async def process_account(update: Update, context: ContextTypes.DEFAULT_TYPE):
     session_string = context.user_data.get('session_string')
     original_password = context.user_data.get('original_password')
     
+    if not client:
+        await update.message.reply_text("❌ Critical Error: Client session lost. Please start over.")
+        return ConversationHandler.END
+        
     try:
-        await update.message.reply_text("🔄 Step 1/3: Terminating other sessions...")
-        await asyncio.sleep(1)
-        
-        authorizations = await client.get_authorizations()
-        for auth in authorizations:
-            if not auth.current:
-                try:
-                    await auth.terminate()
-                except:
-                    pass
-        
-        await update.message.reply_text("✅ Other sessions terminated")
-        await asyncio.sleep(1)
-        
-        await update.message.reply_text("🔄 Step 2/3: Resetting 2FA password...")
+        await update.message.reply_text("🔄 Step 1/2: Securing 2FA password...")
         await asyncio.sleep(1)
         
         try:
@@ -339,30 +342,38 @@ async def process_account(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
             if password_settings.has_password:
                 if original_password:
+                    # Change existing password
                     await client.edit_2fa(
                         current_password=original_password,
-                        new_password='5000'
+                        new_password='5000' # You can change this to a secure, random password
                     )
                     await update.message.reply_text("✅ Password reset to default (5000)")
                 else:
-                    await update.message.reply_text("⚠️ Cannot reset password (no current password)")
+                    await update.message.reply_text("⚠️ Cannot reset password (no current password provided). Skipping.")
             else:
+                # No 2FA, so we can set one.
                 await client.edit_2fa(new_password='5000')
                 await update.message.reply_text("✅ Default password set (5000)")
                 
         except Exception as e:
             logger.warning(f"Password reset warning: {e}")
-            await update.message.reply_text("⚠️ Password reset skipped")
+            await update.message.reply_text(f"⚠️ Password reset skipped: {e}")
         
         await asyncio.sleep(1)
         
-        await update.message.reply_text("🔄 Step 3/3: Saving account to database...")
+        await update.message.reply_text("🔄 Step 2/2: Saving account to database...")
         await asyncio.sleep(1)
+        
+        # --- NEW: Save with probation period ---
+        account_price = db.get_account_price()
+        probation_end = datetime.now() + timedelta(days=30)
         
         account_id = db.create_sold_account(
             seller_user_id=update.effective_user.id,
             phone_number=phone,
-            session_string=session_string
+            session_string=session_string,
+            sold_price=account_price,
+            probation_ends_at=probation_end
         )
         
         context.user_data['account_id'] = account_id
@@ -371,19 +382,21 @@ async def process_account(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await asyncio.sleep(1)
         
         keyboard = InlineKeyboardMarkup([
-            [InlineKeyboardButton("✅ Confirm & Complete Sale", callback_data="confirm_logout")],
+            [InlineKeyboardButton("✅ I have logged out & want my payment", callback_data="confirm_logout")],
             [InlineKeyboardButton("❌ Cancel Sale", callback_data="cancel_sale")]
         ])
         
         await update.message.reply_text(
-            "📱 **Final Step - Confirmation**\n\n"
-            "✅ Other sessions terminated\n"
-            "✅ Password reset complete\n"
-            "✅ Session saved to our system\n"
-            "✅ Ready for payment\n\n"
-            "⚠️ **IMPORTANT:** You should now manually log out from your Telegram app on all devices before confirming.\n\n"
-            "Once you've logged out and are ready, click Confirm to complete the sale and receive payment.\n\n"
-            "**Note:** By confirming, you agree that we now have full control of this account.",
+            "📱 **Final Step - PLEASE READ CAREFULLY**\n\n"
+            "✅ Your 2FA password has been secured.\n"
+            "✅ Your session is saved to our system.\n\n"
+            "⚠️ **ACTION REQUIRED:**\n"
+            "To complete the sale, you **MUST** now go to your Telegram app and manually terminate your *own* session.\n\n"
+            "1. Go to: **Settings > Devices**\n"
+            "2. Find your *current* device (the one you are on).\n"
+            "3. Tap on it and select **'Terminate Session'**.\n"
+            "4. You will be logged out.\n\n"
+            "After you have been logged out, come back here and click the button below to receive your payment.",
             reply_markup=keyboard,
             parse_mode='Markdown'
         )
@@ -402,10 +415,11 @@ async def process_account(update: Update, context: ContextTypes.DEFAULT_TYPE):
     finally:
         if 'original_password' in context.user_data:
             del context.user_data['original_password']
+        pass
 
 async def confirm_logout_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    await query.answer()
+    await query.answer("Verifying...")
     
     account_id = context.user_data.get('account_id')
     phone = context.user_data.get('phone')
@@ -419,42 +433,50 @@ async def confirm_logout_callback(update: Update, context: ContextTypes.DEFAULT_
         context.user_data.clear()
         return ConversationHandler.END
     
+    client = None
     try:
         api_id = int(TELEGRAM_API_ID)
         api_hash = str(TELEGRAM_API_HASH)
         
-        verification_client = TelegramClient(
+        client = TelegramClient(
             StringSession(session_string),
             api_id,
             api_hash
         )
-        await verification_client.connect()
+        await client.connect()
         
-        is_authorized = await verification_client.is_user_authorized()
-        await verification_client.disconnect()
+        is_authorized = await client.is_user_authorized()
         
         if not is_authorized:
-            await query.edit_message_text("❌ Session verification failed. Account may not be properly logged out.")
+            await query.edit_message_text("❌ Session verification failed. Please try the login process again.")
             await cleanup_client(context)
             context.user_data.clear()
             return ConversationHandler.END
         
+        # Mark the account as fully 'active' in the pool
+        db.mark_account_active(account_id)
+        
         account_price = db.get_account_price()
-        db.add_balance(update.effective_user.id, account_price, balance_type='seller')
+        db.update_user_balance(update.effective_user.id, account_price, balance_type='seller')
         
-        referred_by = db.get_user(update.effective_user.id).get('referred_by')
+        user = db.get_user(update.effective_user.id)
+        referred_by = user.get('referred_by')
+        
         if referred_by:
-            from src.database.config import REFERRAL_COMMISSION
-            commission = account_price * REFERRAL_COMMISSION
-            db.add_balance(referred_by, commission, balance_type='referral')
-            db.log_referral_earning(referred_by, update.effective_user.id, commission)
+            commission_rate = db.get_referral_commission()
+            commission = account_price * commission_rate
+            db.update_referral_earnings(referred_by, commission)
         
+        user_after_payment = db.get_user(update.effective_user.id)
+        new_balance = float(user_after_payment['seller_balance'])
+
+        # --- NEW: Added 30-day warning ---
         await query.edit_message_text(
             f"🎉 **Sale Completed Successfully!**\n\n"
             f"💰 **Payment:** ${account_price:.2f} added to your balance\n"
-            f"📱 **Phone:** {phone}\n\n"
-            f"Thank you for selling your account!\n"
-            f"You can withdraw your earnings anytime.",
+            f"💵 **New Balance:** ${new_balance:.2f}\n"
+            f"🆔 **Account ID:** #{account_id}\n\n"
+            f"⚠️ **Security Notice:** This payment is conditional. If this account is reclaimed within **30 days**, a **${account_price:.2f} penalty** will be deducted from your balance.",
             parse_mode='Markdown'
         )
         
@@ -467,7 +489,9 @@ async def confirm_logout_callback(update: Update, context: ContextTypes.DEFAULT_
         )
     
     finally:
-        await cleanup_client(context)
+        await cleanup_client(context) # Clean up the client from process_account
+        if client and client.is_connected(): # Clean up the verification client
+            await client.disconnect()
         context.user_data.clear()
         return ConversationHandler.END
 
@@ -476,8 +500,7 @@ async def cancel_sale_callback(update: Update, context: ContextTypes.DEFAULT_TYP
     await query.answer()
     
     await query.edit_message_text(
-        "❌ Sale cancelled. Your account was not sold.\n\n"
-        "No changes have been made to your account."
+        "❌ Sale cancelled. Your account was not sold."
     )
     
     await cleanup_client(context)
@@ -490,8 +513,7 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     if update.message:
         await update.message.reply_text(
-            "❌ Account selling cancelled.\n\n"
-            "You can start again anytime using the menu.",
+            "❌ Account selling cancelled.",
             reply_markup=ReplyKeyboardRemove()
         )
     elif update.callback_query:

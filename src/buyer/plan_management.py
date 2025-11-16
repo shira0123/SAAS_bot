@@ -9,7 +9,7 @@ from telegram.ext import (
     filters
 )
 from src.database.database import Database
-from datetime import datetime
+from datetime import datetime, date
 
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -37,43 +37,67 @@ async def show_my_plans(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     
     for order in active_orders:
-        plan_type_display = {
-            'unlimited_views': '💎 Unlimited Views',
-            'limited_views': '🎯 Limited Views',
-            'unlimited_reactions': '❤️ Unlimited Reactions',
-            'limited_reactions': '🎪 Limited Reactions'
-        }.get(order['plan_type'], order['plan_type'])
+        from src.admin.admin_rate_management import get_rate_display_name
+        plan_type_display = get_rate_display_name(order['plan_type'])
         
         created_at = order['created_at'].strftime('%Y-%m-%d')
-        expires_at = order.get('expires_at')
-        expiry_str = expires_at.strftime('%Y-%m-%d') if expires_at else 'Not set'
         
-        days_left = 'N/A'
-        if expires_at:
-            days_left = max(0, (expires_at - datetime.now()).days)
+        # Handle different plan types
+        if order['duration'] > 0:
+            # Standard Daily Plan
+            expires_at = order.get('expires_at')
+            expiry_str = expires_at.strftime('%Y-%m-%d') if expires_at else 'Not set'
+            days_left = 'N/A'
+            if expires_at:
+                days_left = max(0, (expires_at - datetime.now()).days)
+            
+            if order['plan_type'].startswith('limited'):
+                # NEW: Daily Quota Display
+                daily_limit = order.get('daily_posts_limit', 0)
+                daily_count = order.get('daily_delivery_count', 0)
+                last_date = order.get('last_delivery_date')
+                if last_date != date.today(): # Reset if it's a new day
+                    daily_count = 0
+                progress = f"Today: {daily_count}/{daily_limit} posts | Total: {order.get('delivered_posts', 0)}/{order['total_posts']} posts"
+            else:
+                # Unlimited Plan
+                progress = f"{order.get('delivered_posts', 0)} posts delivered"
+                
+            timing = f"⏳ Expires: {expiry_str} ({days_left} days left)"
+            
+        else:
+            # One-Time Join & Leave Plan
+            progress = f"{order.get('delivered_posts', 0)}/{order['total_posts']} posts"
+            timing = "⏱️ One-Time Job"
+
         
-        delivered = order.get('delivered_posts', 0)
-        total_posts = order.get('total_posts', 0)
-        
+        drip_feed_hours = order.get('drip_feed_hours', 0)
+        delay_str = f"{drip_feed_hours} hours" if drip_feed_hours > 0 else "Instant"
+
         message = f"""
 📊 **Plan #{order['id']} - {plan_type_display}**
 
 📺 Channel: @{order['channel_username']}
 📅 Started: {created_at}
-⏳ Expires: {expiry_str} ({days_left} days left)
-📈 Progress: {delivered}/{total_posts} posts delivered
-⏱️ Delay: {order.get('delay_seconds', 10)} seconds
-💰 Price: ${order['price']:.2f}
+{timing}
+📈 Progress: {progress}
+⏱️ Drip-Feed: {delay_str}
+💰 Price: ${float(order['price']):.2f}
 
 **Status:** ✅ Active
 """
         
         keyboard = [
             [InlineKeyboardButton("📊 View Details", callback_data=f"plan_view_{order['id']}")],
-            [InlineKeyboardButton("⏱️ Change Delay", callback_data=f"plan_delay_{order['id']}")],
-            [InlineKeyboardButton("🔄 Renew Plan", callback_data=f"plan_renew_{order['id']}")],
+            [InlineKeyboardButton("⏱️ Change Drip-Feed", callback_data=f"plan_delay_{order['id']}")],
+            # [InlineKeyboardButton("🔄 Renew Plan", callback_data=f"plan_renew_{order['id']}")], # TODO
             [InlineKeyboardButton("❌ Cancel Plan", callback_data=f"plan_cancel_{order['id']}")],
         ]
+        
+        # Cannot change delay on one-time jobs
+        if order['duration'] == 0:
+            keyboard.pop(1) 
+            
         reply_markup = InlineKeyboardMarkup(keyboard)
         
         await update.message.reply_text(message, reply_markup=reply_markup, parse_mode='Markdown')
@@ -95,36 +119,65 @@ async def view_plan_details(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text("❌ This plan doesn't belong to you.")
         return
     
-    plan_type_display = {
-        'unlimited_views': '💎 Unlimited Views',
-        'limited_views': '🎯 Limited Views',
-        'unlimited_reactions': '❤️ Unlimited Reactions',
-        'limited_reactions': '🎪 Limited Reactions'
-    }.get(order['plan_type'], order['plan_type'])
+    from src.admin.admin_rate_management import get_rate_display_name
+    plan_type_display = get_rate_display_name(order['plan_type'])
     
     created_at = order['created_at'].strftime('%Y-%m-%d %H:%M')
-    expires_at = order.get('expires_at')
-    expiry_str = expires_at.strftime('%Y-%m-%d %H:%M') if expires_at else 'Not set'
     
     message = f"""
 📊 **Plan Details #{ order['id']}**
 
 **Plan Type:** {plan_type_display}
 **Channel:** @{order['channel_username']}
+"""
 
+    if order['duration'] > 0:
+        # Standard Daily Plan
+        expires_at = order.get('expires_at')
+        expiry_str = expires_at.strftime('%Y-%m-%d %H:%M') if expires_at else 'Not set'
+        message += f"""
 **Timing:**
 • Started: {created_at}
 • Expires: {expiry_str}
 • Duration: {order['duration']} days
-
+"""
+        if order['plan_type'].startswith('limited'):
+             message += f"""
 **Delivery Settings:**
+• Posts per day: {order['daily_posts_limit']}
 • Views/Reactions per post: {order['views_per_post']}
-• Total posts (for limited): {order['total_posts']}
+• Total posts in plan: {order['total_posts']}
+• Total delivered so far: {order.get('delivered_posts', 0)}
+"""
+        else: # Unlimited
+            message += f"""
+**Delivery Settings:**
+• Views/Reactions per day: {order['views_per_post']}
+• Posts per day: Unlimited
+• Total delivered so far: {order.get('delivered_posts', 0)}
+"""
+    else:
+        # One-Time Join & Leave Plan
+        message += f"""
+**Timing:**
+• Created: {created_at}
+• Type: One-Time Job
+"""
+        message += f"""
+**Delivery Settings:**
+• Total Posts to Service: {order['total_posts']}
+• Views/Reactions per post: {order['views_per_post']}
 • Delivered so far: {order.get('delivered_posts', 0)}
-• Delay between actions: {order.get('delay_seconds', 10)} seconds
+"""
 
+    drip_feed_hours = order.get('drip_feed_hours', 0)
+    delay_str = f"{drip_feed_hours} hours" if drip_feed_hours > 0 else "Instant"
+
+    message += f"• Drip-Feed: {delay_str} (Approx. {order.get('delay_seconds', 1)}s delay)\n"
+
+    message += f"""
 **Financial:**
-• Price: ${order['price']:.2f}
+• Price: ${float(order['price']):.2f}
 {f"• Promo code used: {order.get('promo_code')}" if order.get('promo_code') else ''}
 
 **Status:** ✅ {order['status'].title()}
@@ -144,13 +197,19 @@ async def start_change_delay(update: Update, context: ContextTypes.DEFAULT_TYPE)
     context.user_data['changing_delay_order_id'] = order_id
     
     order = db.get_order_by_id(order_id)
-    current_delay = order.get('delay_seconds', 10)
+    
+    if order['duration'] == 0:
+        await query.edit_message_text("❌ You cannot change the delay on a one-time 'Join & Leave' plan after it has started.")
+        return ConversationHandler.END
+        
+    current_delay = order.get('drip_feed_hours', 0)
     
     await query.edit_message_text(
-        f"⏱️ **Change Delay Time**\n\n"
-        f"Current delay: **{current_delay} seconds**\n\n"
-        f"Enter the new delay time in seconds (5-60):\n"
-        f"This controls how many seconds to wait between each view/reaction delivery.",
+        f"⏱️ **Change Drip-Feed Time**\n\n"
+        f"Current drip-feed: **{current_delay} hours** (per day)\n\n"
+        f"Enter the new duration in hours (0-72):\n"
+        f"(0 = Instant, 5 = 5 hours)\n\n"
+        f"This controls how long the *daily* service is spread out over.",
         parse_mode='Markdown'
     )
     
@@ -159,39 +218,57 @@ async def start_change_delay(update: Update, context: ContextTypes.DEFAULT_TYPE)
 async def receive_new_delay(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Receive and update the new delay"""
     try:
-        new_delay = int(update.message.text.strip())
+        new_drip_feed_hours = int(update.message.text.strip())
         
-        if new_delay < 5 or new_delay > 60:
+        if new_drip_feed_hours < 0 or new_drip_feed_hours > 72:
             await update.message.reply_text(
-                "❌ Invalid delay time. Please enter a value between 5 and 60 seconds."
+                "❌ Invalid duration. Please enter a value between 0 and 72 hours."
             )
             return CHANGE_DELAY
         
         order_id = context.user_data.get('changing_delay_order_id')
-        db.update_order_delay(order_id, new_delay)
+        order = db.get_order_by_id(order_id)
+        
+        # --- Recalculate delay_seconds ---
+        delay_seconds = 1
+        if new_drip_feed_hours > 0:
+            total_seconds = new_drip_feed_hours * 3600
+            
+            # For daily plans, quantity is views_per_post (for unlimited)
+            # or views_per_post * daily_posts_limit (for limited)
+            if order['plan_type'].startswith('limited'):
+                quantity_per_period = order['views_per_post'] * order['daily_posts_limit']
+            else: # Unlimited
+                quantity_per_period = order['views_per_post']
+
+            if quantity_per_period > 0:
+                delay_seconds = max(1, total_seconds // quantity_per_period)
+        
+        db.update_order_delay(order_id, delay_seconds, new_drip_feed_hours)
         
         await update.message.reply_text(
-            f"✅ **Delay Updated!**\n\n"
-            f"New delay time: **{new_delay} seconds**\n\n"
+            f"✅ **Drip-Feed Updated!**\n\n"
+            f"New duration: **{new_drip_feed_hours} hours**\n"
+            f"New calculated delay: ~{delay_seconds} sec/action\n\n"
             f"This will apply to all future deliveries for this plan.",
             parse_mode='Markdown'
         )
         
+        context.user_data.clear()
         return ConversationHandler.END
         
     except ValueError:
         await update.message.reply_text(
-            "❌ Please enter a valid number between 5 and 60."
+            "❌ Please enter a valid number between 0 and 72."
         )
         return CHANGE_DELAY
 
 async def renew_plan(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Renew an existing plan"""
+    """Renew an existing plan (Placeholder)"""
     query = update.callback_query
     await query.answer()
     
     order_id = int(query.data.split('_')[2])
-    order = db.get_order_by_id(order_id)
     
     await query.edit_message_text(
         f"🔄 **Renew Plan**\n\n"
@@ -208,6 +285,10 @@ async def cancel_plan(update: Update, context: ContextTypes.DEFAULT_TYPE):
     order_id = int(query.data.split('_')[2])
     order = db.get_order_by_id(order_id)
     
+    if not order:
+        await query.edit_message_text("❌ Plan not found.")
+        return
+        
     user_id = query.from_user.id
     if order['user_id'] != user_id:
         await query.edit_message_text("❌ This plan doesn't belong to you.")
@@ -262,25 +343,37 @@ async def show_plan_history(update: Update, context: ContextTypes.DEFAULT_TYPE):
     message = "📋 **Plan History**\n\n"
     
     for order in history_orders:
-        plan_type_display = {
-            'unlimited_views': '💎 Unlimited Views',
-            'limited_views': '🎯 Limited Views',
-            'unlimited_reactions': '❤️ Unlimited Reactions',
-            'limited_reactions': '🎪 Limited Reactions'
-        }.get(order['plan_type'], order['plan_type'])
+        from src.admin.admin_rate_management import get_rate_display_name
+        plan_type_display = get_rate_display_name(order['plan_type'])
         
-        status_emoji = {'completed': '✅', 'expired': '⏰', 'cancelled': '❌'}.get(order['status'], '📦')
+        status_emoji = {'completed': '✅', 'expired': '⏰', 'cancelled': '❌', 'failed': '❗️'}.get(order['status'], '📦')
         created_at = order['created_at'].strftime('%Y-%m-%d')
         
         message += f"{status_emoji} **Plan #{order['id']}** - {plan_type_display}\n"
-        message += f"  └ @{order['channel_username']} | {created_at} | ${order['price']:.2f}\n\n"
+        message += f"  └ @{order['channel_username']} | {created_at} | ${float(order['price']):.2f}\n\n"
     
     await update.message.reply_text(message, parse_mode='Markdown')
 
 async def cancel_operation(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Cancel the current operation"""
     await update.message.reply_text("Operation cancelled.")
+    context.user_data.clear()
     return ConversationHandler.END
+
+async def back_to_plans(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Callback for 'Back to Plans' button"""
+    query = update.callback_query
+    await query.answer()
+    # This is a bit of a hack; we just re-send the main "My Plans" message
+    # We need to send it as a new message, so we reply to the original user
+    await query.message.delete()
+    # Find the original message that triggered the "My Plans" button
+    original_message = update.callback_query.message.reply_to_message
+    if not original_message:
+        # Fallback if the original message can't be found
+        original_message = update.callback_query.message
+    await show_my_plans(original_message, context)
+
 
 def get_plan_management_handler():
     """Get the conversation handler for plan management"""
