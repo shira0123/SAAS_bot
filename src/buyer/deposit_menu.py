@@ -91,9 +91,10 @@ async def receive_upi_utr(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Receive and validate UTR number"""
     utr = update.message.text.strip()
     
-    if not utr.isdigit() or len(utr) != 12:
+    # Simple validation for UTR (usually digits, but sometimes alphanumeric)
+    if len(utr) < 8 or len(utr) > 20:
         await update.message.reply_text(
-            "❌ Invalid UTR format. Please send a valid 12-digit UTR number:"
+            "❌ Invalid UTR format. Please send a valid Transaction/UTR number:"
         )
         return UPI_UTR
     
@@ -111,7 +112,10 @@ async def receive_upi_utr(update: Update, context: ContextTypes.DEFAULT_TYPE):
     admin_ids = [admin['user_id'] for admin in admins if admin.get('is_active')]
     
     user = db.get_user(user_id)
-    username = user.get('username', 'N/A') if user else 'N/A'
+    raw_username = user.get('username', 'N/A') if user else 'N/A'
+    
+    # FIX: Escape special characters in username to prevent Markdown errors
+    username = str(raw_username).replace('_', '\\_').replace('*', '\\*').replace('`', '\\`')
     
     for admin_id in admin_ids:
         try:
@@ -127,7 +131,7 @@ async def receive_upi_utr(update: Update, context: ContextTypes.DEFAULT_TYPE):
 **Status:** Pending Verification
 
 Please verify the transaction and update the deposit amount using:
-/verifydep {utr} <amount>
+`/verifydep {utr} <amount>`
 """,
                 parse_mode='Markdown'
             )

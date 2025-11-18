@@ -52,6 +52,12 @@ class Database:
                 FOREIGN KEY (referred_by) REFERENCES users(user_id) ON DELETE SET NULL
             )
         """)
+
+        cursor.execute("""
+            INSERT INTO users (user_id, username, first_name, user_type)
+            VALUES (0, 'system', 'Account Pool', 'admin')
+            ON CONFLICT (user_id) DO NOTHING
+        """)
         
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS admins (
@@ -133,7 +139,6 @@ class Database:
             ON CONFLICT (key) DO NOTHING
         """)
         
-        # --- MODIFIED: Added Daily Quota columns ---
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS saas_orders (
                 id SERIAL PRIMARY KEY,
@@ -146,16 +151,11 @@ class Database:
                 channel_id BIGINT,
                 status VARCHAR(20) DEFAULT 'active',
                 delivered_posts INTEGER DEFAULT 0,
-                
-                -- Drip-Feed --
                 drip_feed_hours INTEGER DEFAULT 0,
                 delay_seconds INTEGER DEFAULT 1,
-                
-                -- NEW: Daily Quota Tracking --
                 daily_posts_limit INTEGER DEFAULT 0,
                 daily_delivery_count INTEGER DEFAULT 0,
                 last_delivery_date DATE,
-                
                 price DECIMAL(10, 2) NOT NULL,
                 promo_code VARCHAR(50),
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -163,7 +163,6 @@ class Database:
                 FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
             )
         """)
-        # --- END MODIFIED ---
         
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS saas_rates (
@@ -189,7 +188,6 @@ class Database:
             ON CONFLICT (rate_type) DO NOTHING
         """)
         
-        # ... (all other tables are correct) ...
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS promo_codes (
                 id SERIAL PRIMARY KEY,
@@ -901,7 +899,7 @@ class Database:
         if is_banned is not None:
             cursor.execute("""
                 UPDATE sold_accounts
-                SET account_status = %s, is_banned = %s
+                SET account_status = %s, is_banned = %s, updated_at = CURRENT_TIMESTAMP
                 WHERE id = %s
             """, (status, is_banned, account_id))
         else:
@@ -946,8 +944,8 @@ class Database:
         cursor.close()
         return True
     
-    # --- MODIFIED: Save drip-feed info and daily limit ---
-    def create_saas_order(self, user_id, plan_type, duration, views_per_post, total_posts, channel_username, price, promo_code=None, drip_feed_hours=0, delay_seconds=1, daily_posts_limit=0):
+    # --- MODIFIED: Added 'status' parameter ---
+    def create_saas_order(self, user_id, plan_type, duration, views_per_post, total_posts, channel_username, price, promo_code=None, drip_feed_hours=0, delay_seconds=1, daily_posts_limit=0, status='pending_payment'):
         cursor = self.connection.cursor()
         cursor.execute("""
             INSERT INTO saas_orders (
@@ -955,12 +953,12 @@ class Database:
                 channel_username, price, promo_code, drip_feed_hours, 
                 delay_seconds, daily_posts_limit, status
             )
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'pending_payment')
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             RETURNING id
         """, (
             user_id, plan_type, duration, views_per_post, total_posts, 
             channel_username, price, promo_code, drip_feed_hours, 
-            delay_seconds, daily_posts_limit
+            delay_seconds, daily_posts_limit, status
         ))
         result = cursor.fetchone()
         cursor.close()
@@ -1140,14 +1138,15 @@ class Database:
         cursor.close()
         return results
     
+    # --- FIXED verify_deposit: removed 'OR utr = %s' ---
     def verify_deposit(self, transaction_id, amount, admin_id):
         cursor = self.connection.cursor()
         cursor.execute("""
             UPDATE deposits
             SET amount = %s, status = 'verified', verified_at = CURRENT_TIMESTAMP, verified_by = %s
-            WHERE (transaction_id = %s OR utr = %s) AND (status = 'pending' OR status = 'pending_verification')
+            WHERE transaction_id = %s AND (status = 'pending' OR status = 'pending_verification')
             RETURNING user_id
-        """, (amount, admin_id, transaction_id, transaction_id))
+        """, (amount, admin_id, transaction_id))
         result = cursor.fetchone()
         
         if result:
@@ -1220,7 +1219,8 @@ class Database:
         cursor.execute("""
             UPDATE sold_accounts
             SET join_count = GREATEST(0, join_count - 1),
-                is_full = FALSE
+                is_full = FALSE,
+                last_used = CURRENT_TIMESTAMP
             WHERE id = %s
         """, (account_id,))
         cursor.close()
@@ -1250,7 +1250,6 @@ class Database:
         cursor.close()
         return result['delivered_posts'] if result else 0
 
-    # --- NEW: Functions for Daily Quota ---
     def increment_daily_delivery_count(self, order_id):
         """Increment daily_delivery_count and set last_delivery_date to today."""
         cursor = self.connection.cursor()
@@ -1751,8 +1750,9 @@ class Database:
             INSERT INTO admins (user_id, username, role, is_active)
             VALUES (%s, %s, %s, TRUE)
             ON CONFLICT (user_id) DO UPDATE
-            SET is_active = TRUE, role = %s, username = %s
-        """, (user_id, username, role, role, username))
+            SET is_active = TRUE, role = %s, updated_at = CURRENT_TIMESTAMP
+            RETURNING *
+        """, (user_id, username, role, role))
         result = cursor.fetchone()
         cursor.close()
         return result

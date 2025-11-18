@@ -5,7 +5,6 @@ services:
     container_name: telegram_seller_bot
     restart: unless-stopped
     environment:
-      # CORRECTED: Pass the variable as SELLER_BOT_TOKEN
       - SELLER_BOT_TOKEN=${SELLER_BOT_TOKEN}
       - TELEGRAM_API_ID=${TELEGRAM_API_ID}
       - TELEGRAM_API_HASH=${TELEGRAM_API_HASH}
@@ -30,12 +29,13 @@ services:
     container_name: telegram_buyer_bot
     restart: unless-stopped
     environment:
-      # CORRECTED: Pass the variable as BUYER_BOT_TOKEN
       - BUYER_BOT_TOKEN=${BUYER_BOT_TOKEN}
       - TELEGRAM_API_ID=${TELEGRAM_API_ID}
       - TELEGRAM_API_HASH=${TELEGRAM_API_HASH}
       - ADMIN_IDS=${ADMIN_IDS}
       - DATABASE_URL=${DATABASE_URL}
+      - CRYPTOMUS_API_KEY=${CRYPTOMUS_API_KEY}
+      - CRYPTOMUS_MERCHANT_ID=${CRYPTOMUS_MERCHANT_ID}
     volumes:
       - ./src:/app/src
       - ./logs:/app/logs
@@ -46,14 +46,13 @@ services:
       - bot-network
     command: ["python", "main_buyer.py"]
 
-  # --- WORKER SERVICES ---
+  # --- WORKER SERVICES (FIXED COMMANDS) ---
 
   report_worker:
     build: .
     container_name: telegram_report_worker
     restart: unless-stopped
     environment:
-      # CORRECTED: Pass the variable as BUYER_BOT_TOKEN
       - BUYER_BOT_TOKEN=${BUYER_BOT_TOKEN}
       - ADMIN_IDS=${ADMIN_IDS}
       - DATABASE_URL=${DATABASE_URL}
@@ -62,14 +61,14 @@ services:
         condition: service_healthy
     networks:
       - bot-network
-    command: ["python", "src/bot/run_scheduler.py"]
+    # FIXED: Run as module to solve 'No module named src'
+    command: ["python", "-m", "src.bot.run_scheduler"]
 
   account_worker:
     build: .
     container_name: telegram_account_worker
     restart: unless-stopped
     environment:
-      # CORRECTED: Pass the variable as BUYER_BOT_TOKEN
       - BUYER_BOT_TOKEN=${BUYER_BOT_TOKEN}
       - TELEGRAM_API_ID=${TELEGRAM_API_ID}
       - TELEGRAM_API_HASH=${TELEGRAM_API_HASH}
@@ -80,7 +79,8 @@ services:
         condition: service_healthy
     networks:
       - bot-network
-    command: ["python", "src/utils/account_monitor_scheduler.py"]
+    # FIXED: Run as module
+    command: ["python", "-m", "src.utils.account_monitor_scheduler"]
 
   delivery_worker:
     build: .
@@ -95,14 +95,14 @@ services:
         condition: service_healthy
     networks:
       - bot-network
-    command: ["python", "src/utils/service_delivery_worker.py"]
+    # FIXED: Run as module
+    command: ["python", "-m", "src.utils.service_delivery_worker"]
 
   expiry_worker:
     build: .
     container_name: telegram_expiry_worker
     restart: unless-stopped
     environment:
-      # CORRECTED: Pass the variable as BUYER_BOT_TOKEN
       - BUYER_BOT_TOKEN=${BUYER_BOT_TOKEN}
       - TELEGRAM_API_ID=${TELEGRAM_API_ID}
       - TELEGRAM_API_HASH=${TELEGRAM_API_HASH}
@@ -112,7 +112,26 @@ services:
         condition: service_healthy
     networks:
       - bot-network
-    command: ["python", "src/bot/plan_expiry_handler.py"]
+    # FIXED: Run as module
+    command: ["python", "-m", "src.bot.plan_expiry_handler"]
+
+  # --- NEW: WEBHOOK SERVER ---
+  webhook-server:
+    build: .
+    container_name: telegram_webhook_server
+    restart: unless-stopped
+    environment:
+      - DATABASE_URL=${DATABASE_URL}
+      - CRYPTOMUS_API_KEY=${CRYPTOMUS_API_KEY}
+      - CRYPTOMUS_MERCHANT_ID=${CRYPTOMUS_MERCHANT_ID}
+    ports:
+      - "5000:5000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - bot-network
+    command: ["python", "webhook_server.py"]
 
   # --- DATABASE ---
 

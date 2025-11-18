@@ -30,22 +30,24 @@ async def verify_deposit_command(update: Update, context: ContextTypes.DEFAULT_T
             return
         
         admin_id = update.effective_user.id
+        # Attempt verification
         user_id = db.verify_deposit(utr, amount, admin_id)
         
         if user_id:
             user = db.get_user(user_id)
             new_balance = user.get('buyer_wallet_balance', 0) if user else 0
+            # Escape username or just don't use markdown for it
             username = user.get('username', 'N/A') if user else 'N/A'
             
             await update.message.reply_text(
                 f"✅ **Deposit Verified Successfully!**\n\n"
                 f"**UTR:** `{utr}`\n"
                 f"**User ID:** {user_id}\n"
-                f"**Username:** @{username}\n"
+                f"**Username:** @{username}\n" # No markdown here to be safe
                 f"**Amount:** ${amount:.2f}\n"
                 f"**New Balance:** ${new_balance:.2f}\n\n"
-                f"User has been notified and wallet credited.",
-                parse_mode='Markdown'
+                f"User has been notified and wallet credited."
+                # Removed parse_mode='Markdown' to prevent crashes
             )
             
             try:
@@ -65,6 +67,7 @@ Thank you for your payment! 🎉
                     parse_mode='Markdown'
                 )
                 
+                # Check for pending orders to activate
                 await activate_pending_orders(context, user_id)
                 
             except Exception as e:
@@ -81,7 +84,7 @@ Thank you for your payment! 🎉
         await update.message.reply_text("❌ Invalid amount format. Please use a number (e.g., 50.00)")
     except Exception as e:
         logger.error(f"Error verifying deposit: {e}")
-        await update.message.reply_text("❌ An error occurred while verifying the deposit.")
+        await update.message.reply_text(f"❌ An error occurred: {str(e)}")
 
 async def view_pending_deposits(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Admin command to view pending deposits: /deposits"""
@@ -103,24 +106,24 @@ async def view_pending_deposits(update: Update, context: ContextTypes.DEFAULT_TY
     for deposit in deposits:
         user_id = deposit.get('user_id')
         username = deposit.get('username', 'N/A')
+        
         method = deposit.get('payment_method', 'N/A')
         utr = deposit.get('transaction_id', 'N/A')
         status = deposit.get('status', 'pending')
         created_at = deposit.get('created_at')
         date_text = created_at.strftime('%Y-%m-%d %H:%M') if created_at else 'N/A'
         
-        message += f"""
-**User:** @{username} (ID: {user_id})
-**Method:** {method}
-**UTR/TxID:** `{utr}`
-**Status:** {status}
-**Requested:** {date_text}
-
-"""
+        # Simplified message format to avoid markdown errors
+        message += f"User: @{username} (ID: {user_id})\n"
+        message += f"Method: {method}\n"
+        message += f"UTR/TxID: {utr}\n"
+        message += f"Status: {status}\n"
+        message += f"Requested: {date_text}\n\n"
     
-    message += "\n**To verify:** `/verifydep <utr> <amount>`"
+    message += "To verify: /verifydep <utr> <amount>"
     
-    await update.message.reply_text(message, parse_mode='Markdown')
+    # Removed parse_mode to prevent 'Can't parse entities' error
+    await update.message.reply_text(message)
 
 async def activate_pending_orders(context: ContextTypes.DEFAULT_TYPE, user_id: int):
     """Automatically activate pending orders if user has sufficient balance"""

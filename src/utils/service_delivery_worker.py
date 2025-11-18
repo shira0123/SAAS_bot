@@ -1,6 +1,11 @@
+import sys
+import os
+
+# Add project root to path
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../../')))
+
 import asyncio
 import logging
-import os
 from telethon import TelegramClient
 from telethon.sessions import StringSession
 from telethon.errors import (
@@ -43,6 +48,7 @@ class ServiceDeliveryWorker:
             await client.connect()
             
             if not await client.is_user_authorized():
+                # If file session fails, try in-memory StringSession once
                 logger.warning(f"File session for {account_id} failed. Trying StringSession.")
                 client = TelegramClient(
                     StringSession(session_string),
@@ -126,10 +132,10 @@ class ServiceDeliveryWorker:
                 logger.warning(f"Account {account_id} already in channel {channel_username}")
                 try:
                     if 'joinchat/' in channel_username or 't.me/+' in channel_username:
-                        return True # It's a private channel, we can't just get_entity
+                        return True 
                     return await client.get_entity(channel_username.replace('@',''))
                 except Exception:
-                    return True # Fallback for private
+                    return True 
             logger.error(f"Error joining channel {channel_username} with account {account_id}: {e}")
             return None
 
@@ -140,8 +146,8 @@ class ServiceDeliveryWorker:
         order_id = order['id']
         plan_type = order['plan_type']
         channel_username = order['channel_username']
-        post_count = order['total_posts'] # e.g., 5 posts
-        quantity = order['views_per_post'] # e.g., 100 views per post
+        post_count = order['total_posts'] 
+        quantity = order['views_per_post'] 
         delay_seconds = order.get('delay_seconds', 1)
         is_reaction = 'react' in plan_type
         
@@ -161,7 +167,6 @@ class ServiceDeliveryWorker:
             
             monitor_client = None
 
-            # 1. Join Channel with all accounts
             logger.info(f"Order #{order_id}: Joining channel with {len(available_accounts)} accounts...")
             joined_count = 0
             for account in available_accounts:
@@ -179,7 +184,7 @@ class ServiceDeliveryWorker:
                     if not channel_entity:
                         channel_entity = entity
                 
-                await asyncio.sleep(random.uniform(1, 3)) # Stagger joins
+                await asyncio.sleep(random.uniform(1, 3)) 
 
             if joined_count == 0 or not monitor_client or not channel_entity:
                 logger.error(f"Order #{order_id}: No accounts could join channel {channel_username}. Aborting.")
@@ -188,7 +193,6 @@ class ServiceDeliveryWorker:
 
             logger.info(f"Order #{order_id}: Successfully joined with {joined_count} accounts. Getting posts...")
 
-            # 2. Get Recent Posts
             messages = await monitor_client.get_messages(channel_entity, limit=post_count)
 
             if not messages:
@@ -196,7 +200,6 @@ class ServiceDeliveryWorker:
             else:
                 logger.info(f"Order #{order_id}: Found {len(messages)} posts to service.")
                 
-                # 3. Deliver Service to each post
                 reactions_list = ['👍', '❤️', '🔥', '👏', '😍', '🎉', '🤩']
                 
                 for post in messages:
@@ -215,7 +218,6 @@ class ServiceDeliveryWorker:
                             
                             self.db.log_account_usage(account_id, order_id, channel_username, action_type, True)
                             delivered_count += 1
-                            # --- DRIP-FEED ---
                             await asyncio.sleep(delay_seconds)
                         
                         except Exception as e:
@@ -223,9 +225,8 @@ class ServiceDeliveryWorker:
 
                     logger.info(f"Order #{order_id}: Delivered {delivered_count} services to post {post.id}")
                     self.db.increment_delivered_posts(order_id)
-                    await asyncio.sleep(random.uniform(3, 10)) # Wait between posts
+                    await asyncio.sleep(random.uniform(5, 15))
 
-            # 4. Leave Channel with all accounts
             logger.info(f"Order #{order_id}: Service complete. Leaving channel...")
             for account_id, client in clients_in_job.items():
                 try:
@@ -235,7 +236,6 @@ class ServiceDeliveryWorker:
                 except Exception as e:
                     logger.error(f"Order #{order_id}: Account {account_id} failed to leave: {e}")
 
-            # 5. Mark Order as Completed
             self.db.update_order_status(order_id, 'completed')
             logger.info(f"🎉 Order #{order_id} (Join & Leave) is marked as COMPLETED.")
             
@@ -243,7 +243,6 @@ class ServiceDeliveryWorker:
             logger.error(f"CRITICAL: Failed to execute Join & Leave Order #{order_id}: {e}")
             self.db.update_order_status(order_id, 'failed')
         finally:
-            # Disconnect all clients used in this job
             for account_id, client in clients_in_job.items():
                 if client and client.is_connected():
                     await client.disconnect()
@@ -252,7 +251,6 @@ class ServiceDeliveryWorker:
 
 
     async def process_new_orders(self):
-        """Check for new active orders"""
         active_orders = self.db.get_active_orders()
         
         for order in active_orders:
@@ -262,7 +260,6 @@ class ServiceDeliveryWorker:
             if order_id in self.monitored_orders:
                 continue
 
-            # --- ROUTING LOGIC ---
             if 'join' in plan_type or order['duration'] == 0:
                 logger.info(f"Found new Join & Leave order #{order_id}. Starting one-time job.")
                 self.monitored_orders.add(order_id)
@@ -302,9 +299,8 @@ class ServiceDeliveryWorker:
                 self.monitored_orders.add(order_id)
 
     async def deliver_views(self, message, order):
-        """Deliver views to a message for a standard plan"""
         account_count = order['views_per_post']
-        delay_seconds = order.get('delay_seconds', 10) # Drip-Feed
+        delay_seconds = order.get('delay_seconds', 10) 
         available_accounts = self.db.get_available_accounts(limit=account_count)
         
         logger.info(f"Order #{order['id']}: Delivering {len(available_accounts)} views to post {message.id}...")
@@ -319,15 +315,14 @@ class ServiceDeliveryWorker:
                 await client.send_read_acknowledge(message.chat_id, message.id)
                 self.db.update_account_last_used(account['id'])
                 self.db.log_account_usage(account['id'], order['id'], order['channel_username'], 'view_delivery', True)
-                await asyncio.sleep(delay_seconds) # --- DRIP-FEED ---
+                await asyncio.sleep(delay_seconds) 
                 
             except Exception as e:
                 logger.error(f"Error delivering view with account {account['id']}: {e}")
 
     async def deliver_reactions(self, message, order):
-        """Deliver reactions to a message for a standard plan"""
         account_count = order['views_per_post']
-        delay_seconds = order.get('delay_seconds', 10) # Drip-Feed
+        delay_seconds = order.get('delay_seconds', 10) 
         available_accounts = self.db.get_available_accounts(limit=account_count)
         
         logger.info(f"Order #{order['id']}: Delivering {len(available_accounts)} reactions to post {message.id}...")
@@ -344,20 +339,15 @@ class ServiceDeliveryWorker:
                 await client.send_reaction(message.chat_id, message.id, reaction)
                 self.db.update_account_last_used(account['id'])
                 self.db.log_account_usage(account['id'], order['id'], order['channel_username'], 'reaction_delivery', True)
-                await asyncio.sleep(delay_seconds) # --- DRIP-FEED ---
+                await asyncio.sleep(delay_seconds) 
                 
             except Exception as e:
                 logger.error(f"Error delivering reaction with account {account['id']}: {e}")
         
     async def should_deliver_for_limited_plan(self, order):
-        """
-        Check if we should deliver for a standard limited plan
-        based on TOTAL plan quota and DAILY plan quota.
-        """
         order_id = order['id']
         
-        # 1. Check TOTAL plan quota
-        total_posts_for_plan = order['total_posts'] # e.g., 35 total
+        total_posts_for_plan = order['total_posts']
         delivered_posts_total = order.get('delivered_posts', 0)
         
         if delivered_posts_total >= total_posts_for_plan:
@@ -365,13 +355,11 @@ class ServiceDeliveryWorker:
             self.db.update_order_status(order_id, 'completed')
             return False
             
-        # 2. Check DAILY plan quota
         daily_posts_limit = order['daily_posts_limit']
         daily_delivery_count = order.get('daily_delivery_count', 0)
         last_delivery_date = order.get('last_delivery_date')
         today = date.today()
 
-        # If it's a new day, reset the daily counter
         if last_delivery_date is None or last_delivery_date != today:
             logger.info(f"Order {order_id}: New day. Resetting daily delivery count to 0.")
             self.db.reset_daily_delivery_count(order_id)
@@ -384,34 +372,29 @@ class ServiceDeliveryWorker:
         return True
     
     async def process_new_message_for_standard_plan(self, message, order):
-        """Process a new message/post for a standard plan"""
         plan_type = order['plan_type']
         order_id = order['id']
         
         logger.info(f"Processing new message {message.id} in {order['channel_username']} for STANDARD order {order_id}")
         
         if 'unlimited' in plan_type:
-            # Unlimited plans have no daily post limit
             if 'view' in plan_type:
                 await self.deliver_views(message, order)
             else:
                 await self.deliver_reactions(message, order)
-            self.db.increment_delivered_posts(order_id) # Track total posts for stats
+            self.db.increment_delivered_posts(order_id) 
             
         elif 'limited' in plan_type:
-            # Limited plans must check daily and total quotas
             if await self.should_deliver_for_limited_plan(order):
                 if 'view' in plan_type:
                     await self.deliver_views(message, order)
                 else:
                     await self.deliver_reactions(message, order)
                 
-                # Increment both total and daily counters
                 self.db.increment_delivered_posts(order_id)
                 self.db.increment_daily_delivery_count(order_id)
     
     async def monitor_channel(self, channel_username, orders):
-        """Monitor a specific channel for new posts and deliver services"""
         logger.info(f"Starting to monitor channel: {channel_username}")
         
         client_to_use = None

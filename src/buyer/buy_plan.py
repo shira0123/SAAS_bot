@@ -9,13 +9,12 @@ logger = logging.getLogger(__name__)
 
 db = Database()
 
-# NEW: Added DRIP_FEED state
 (
     PLAN_DAYS,
     PLAN_DAILY_POSTS,
     PLAN_VIEWS_PER_POST,
     PLAN_CHANNEL,
-    DRIP_FEED,  # New state for Drip-Feed
+    DRIP_FEED,
     CONFIRM_ORDER,
     JOIN_LEAVE_POST_COUNT,
     JOIN_LEAVE_QUANTITY,
@@ -65,20 +64,11 @@ Select a plan to continue:
     
     if update.callback_query:
         await update.callback_query.answer()
-        await update.callback_query.edit_message_text(
-            message,
-            reply_markup=reply_markup,
-            parse_mode='Markdown'
-        )
+        await update.callback_query.edit_message_text(message, reply_markup=reply_markup, parse_mode='Markdown')
     else:
-        await update.message.reply_text(
-            message,
-            reply_markup=reply_markup,
-            parse_mode='Markdown'
-        )
+        await update.message.reply_text(message, reply_markup=reply_markup, parse_mode='Markdown')
 
 async def start_plan_purchase(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle plan type selection and start input collection"""
     query = update.callback_query
     await query.answer()
     
@@ -99,45 +89,27 @@ async def start_plan_purchase(update: Update, context: ContextTypes.DEFAULT_TYPE
     plan_name = get_rate_display_name(plan_type)
     
     if 'join' in plan_type:
-        # --- NEW FLOW for Join & Leave ---
         if 'n_posts' in plan_type:
-            # Ask for number of posts
             await query.edit_message_text(
-                f"📝 **{plan_name} Plan**\n\n"
-                f"This is a one-time service. Accounts will join, service N posts, and then leave.\n\n"
-                f"**Step 1/4: How many posts?**\n"
-                f"Please enter the number of recent posts you want to service (e.g., 5):\n\n"
-                f"Or /cancel to go back.",
+                f"📝 **{plan_name} Plan**\n\nThis is a one-time service.\n\n**Step 1/4: How many posts?**\nPlease enter the number of recent posts to service (e.g., 5):\n\nOr /cancel to go back.",
                 parse_mode='Markdown'
             )
             return JOIN_LEAVE_POST_COUNT
         else:
-            # This is a "Recent Post" plan, it only services 1 post.
             context.user_data['post_count'] = 1
-            # Skip to asking for Quantity
             await query.edit_message_text(
-                f"📝 **{plan_name} Plan**\n\n"
-                f"This is a one-time service. Accounts will join, service the single most recent post, and then leave.\n\n"
-                f"**Step 1/4: How many {'views' if 'view' in plan_type else 'reactions'}?**\n"
-                f"Please enter the total number of {'views' if 'view' in plan_type else 'reactions'} you want delivered (e.g., 500):\n\n"
-                f"Or /cancel to go back.",
+                f"📝 **{plan_name} Plan**\n\nThis is a one-time service.\n\n**Step 1/4: How many {'views' if 'view' in plan_type else 'reactions'}?**\nPlease enter the total number you want delivered (e.g., 500):\n\nOr /cancel to go back.",
                 parse_mode='Markdown'
             )
             return JOIN_LEAVE_QUANTITY
     else:
-        # --- EXISTING FLOW for Standard Plans ---
         await query.edit_message_text(
-            f"📝 **{plan_name} Plan**\n\n"
-            f"**Step 1/5: Duration**\n\n"
-            f"How many days should this service run?\n"
-            f"Enter a number between 1 and 365:\n\n"
-            f"Or /cancel to go back.",
+            f"📝 **{plan_name} Plan**\n\n**Step 1/5: Duration**\n\nHow many days should this service run?\nEnter a number (1-365):\n\nOr /cancel to go back.",
             parse_mode='Markdown'
         )
         return PLAN_DAYS
 
 async def receive_join_leave_post_count(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Receives the number of posts for 'Join N Posts' plans"""
     try:
         post_count = int(update.message.text.strip())
         if post_count < 1 or post_count > 50:
@@ -146,14 +118,9 @@ async def receive_join_leave_post_count(update: Update, context: ContextTypes.DE
         
         context.user_data['post_count'] = post_count
         plan_type = context.user_data['plan_type']
-        plan_name = get_rate_display_name(plan_type)
-
+        
         await update.message.reply_text(
-            f"✅ **{plan_name} Plan**\n"
-            f"✅ Posts to service: {post_count}\n\n"
-            f"**Step 2/4: How many {'views' if 'view' in plan_type else 'reactions'} per post?**\n\n"
-            f"Please enter the number of {'views' if 'view' in plan_type else 'reactions'} you want for *each* post (e.g., 100):\n\n"
-            f"Or /cancel to go back.",
+            f"✅ Posts: {post_count}\n\n**Step 2/4: How many {'views' if 'view' in plan_type else 'reactions'} per post?**\n\nOr /cancel to go back.",
             parse_mode='Markdown'
         )
         return JOIN_LEAVE_QUANTITY
@@ -163,7 +130,6 @@ async def receive_join_leave_post_count(update: Update, context: ContextTypes.DE
         return JOIN_LEAVE_POST_COUNT
 
 async def receive_join_leave_quantity(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Receives the quantity of views/reactions for Join/Leave plans"""
     try:
         quantity = int(update.message.text.strip())
         if quantity < 10:
@@ -171,72 +137,43 @@ async def receive_join_leave_quantity(update: Update, context: ContextTypes.DEFA
             return JOIN_LEAVE_QUANTITY
         
         context.user_data['quantity_per_post'] = quantity
-        plan_type = context.user_data['plan_type']
-        plan_name = get_rate_display_name(plan_type)
         
         await update.message.reply_text(
-            f"✅ **{plan_name} Plan**\n"
-            f"✅ {'Views' if 'view' in plan_type else 'Reactions'} per post: {quantity}\n\n"
-            f"**Step 3/4: Channel Link**\n\n"
-            f"Please send your channel link or username:\n\n"
-            f"Or /cancel to go back.",
+            f"✅ Quantity: {quantity}\n\n**Step 3/4: Channel Link**\nPlease send your channel link or username:\n\nOr /cancel to go back.",
             parse_mode='Markdown'
         )
         return JOIN_LEAVE_CHANNEL
-        
     except ValueError:
         await update.message.reply_text("❌ Invalid number. Please enter a valid number:")
         return JOIN_LEAVE_QUANTITY
 
 async def receive_join_leave_channel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Receives the channel for Join/Leave plans, asks for drip-feed."""
     channel_username = await validate_and_normalize_channel(update)
     if not channel_username:
         return JOIN_LEAVE_CHANNEL
     
     context.user_data['channel_username'] = channel_username
-    plan_name = get_rate_display_name(context.user_data['plan_type'])
-
+    
     await update.message.reply_text(
-        f"✅ **{plan_name} Plan**\n"
-        f"✅ Channel: {channel_username}\n\n"
-        f"**Step 4/4: Drip-Feed (Delay)**\n\n"
-        f"How many hours should the delivery be spread over?\n"
-        f"Enter a number of hours (e.g., `5` for 5 hours).\n"
-        f"Enter `0` for instant delivery.\n\n"
-        f"Or /cancel to go back.",
+        f"✅ Channel: {channel_username}\n\n**Step 4/4: Drip-Feed (Delay)**\n\nHow many hours should the delivery be spread over?\nEnter `0` for instant delivery.\n\nOr /cancel to go back.",
         parse_mode='Markdown'
     )
     return DRIP_FEED
 
-
-# --- EXISTING FUNCTIONS (Modified) ---
-
 async def validate_and_normalize_channel(update: Update):
-    """Helper function to validate channel input."""
     channel = update.message.text.strip()
-    
     if re.match(r'^@\w+$', channel):
-        channel_username = channel
+        return channel
     elif 't.me/' in channel:
         if 'joinchat/' in channel or 't.me/+' in channel:
-             # This is a private invite link
-             channel_username = channel # Store the full link
+             return channel
         else:
-            # This is a public link
             parts = channel.split('t.me/')
-            if len(parts) > 1:
-                channel_username = '@' + parts[1].strip('/')
-            else:
-                await update.message.reply_text("❌ Invalid channel link. Please send a valid link or username.")
-                return None
+            return '@' + parts[1].strip('/') if len(parts) > 1 else None
     else:
-        channel_username = '@' + channel.lstrip('@')
-    
-    return channel_username
+        return '@' + channel.lstrip('@')
 
 async def receive_plan_days(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Receive number of days (Standard plans only)"""
     try:
         days = int(update.message.text.strip())
         if days < 1 or days > 365:
@@ -245,37 +182,24 @@ async def receive_plan_days(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         context.user_data['days'] = days
         plan_type = context.user_data.get('plan_type')
-        plan_name = get_rate_display_name(plan_type)
         
         if 'unlimited' in plan_type:
             await update.message.reply_text(
-                f"✅ **{plan_name} Plan**\n"
-                f"✅ Duration: {days} days\n\n"
-                f"**Step 2/4: Daily {'Views' if 'views' in plan_type else 'Reactions'}**\n\n"
-                f"How many {'views' if 'views' in plan_type else 'reactions'} per day?\n"
-                f"Enter a number:\n\n"
-                f"Or /cancel to go back.",
+                f"✅ Duration: {days} days\n\n**Step 2/4: Daily {'Views' if 'views' in plan_type else 'Reactions'}**\nHow many per day?\n\nOr /cancel to go back.",
                 parse_mode='Markdown'
             )
             return PLAN_DAILY_POSTS 
-        else: # Limited Plans
+        else:
             await update.message.reply_text(
-                f"✅ **{plan_name} Plan**\n"
-                f"✅ Duration: {days} days\n\n"
-                f"**Step 2/5: Daily Posts**\n\n"
-                f"How many posts per day should receive {'views' if 'views' in plan_type else 'reactions'}?\n"
-                f"Enter a number:\n\n"
-                f"Or /cancel to go back.",
+                f"✅ Duration: {days} days\n\n**Step 2/5: Daily Posts**\nHow many posts per day to service?\n\nOr /cancel to go back.",
                 parse_mode='Markdown'
             )
             return PLAN_DAILY_POSTS
-        
     except ValueError:
         await update.message.reply_text("❌ Invalid number. Please enter a valid number:")
         return PLAN_DAYS
 
 async def receive_daily_posts(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Receive daily posts (Limited) or daily views (Unlimited)"""
     try:
         daily_amount = int(update.message.text.strip())
         if daily_amount < 1:
@@ -283,41 +207,30 @@ async def receive_daily_posts(update: Update, context: ContextTypes.DEFAULT_TYPE
             return PLAN_DAILY_POSTS
         
         plan_type = context.user_data.get('plan_type')
-        plan_name = get_rate_display_name(plan_type)
         
         if 'unlimited' in plan_type:
             context.user_data['daily_views_or_reactions'] = daily_amount
             context.user_data['views_per_post'] = daily_amount
-            context.user_data['total_posts'] = 0 # Unlimited
+            context.user_data['total_posts'] = 0
             
             await update.message.reply_text(
-                f"✅ **{plan_name} Plan**\n"
-                f"✅ Daily {'Views' if 'views' in plan_type else 'Reactions'}: {daily_amount}\n\n"
-                f"**Step 3/4: Channel Link**\n\n"
-                f"Please send your channel link or username:\n\n"
-                f"Or /cancel to go back.",
+                f"✅ Daily Amount: {daily_amount}\n\n**Step 3/4: Channel Link**\nPlease send your channel link:\n\nOr /cancel to go back.",
                 parse_mode='Markdown'
             )
             return PLAN_CHANNEL
-        else: # Limited Plans
+        else:
             context.user_data['daily_posts'] = daily_amount
             
             await update.message.reply_text(
-                f"✅ **{plan_name} Plan**\n"
-                f"✅ Daily Posts: {daily_amount}\n\n"
-                f"**Step 3/5: {'Views' if 'views' in plan_type else 'Reactions'} Per Post**\n\n"
-                f"How many {'views' if 'views' in plan_type else 'reactions'} per post?\n\n"
-                f"Or /cancel to go back.",
+                f"✅ Daily Posts: {daily_amount}\n\n**Step 3/5: {'Views' if 'views' in plan_type else 'Reactions'} Per Post**\nHow many per post?\n\nOr /cancel to go back.",
                 parse_mode='Markdown'
             )
             return PLAN_VIEWS_PER_POST
-        
     except ValueError:
         await update.message.reply_text("❌ Invalid number. Please enter a valid number:")
         return PLAN_DAILY_POSTS
 
 async def receive_views_per_post(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Receive views/reactions per post (Limited plans only)"""
     try:
         views = int(update.message.text.strip())
         if views < 1:
@@ -325,51 +238,33 @@ async def receive_views_per_post(update: Update, context: ContextTypes.DEFAULT_T
             return PLAN_VIEWS_PER_POST
         
         context.user_data['views_per_post'] = views
-        plan_type = context.user_data.get('plan_type')
-        plan_name = get_rate_display_name(plan_type)
         
         await update.message.reply_text(
-            f"✅ **{plan_name} Plan**\n"
-            f"✅ {'Views' if 'views' in plan_type else 'Reactions'} Per Post: {views}\n\n"
-            f"**Step 4/5: Channel Link**\n\n"
-            f"Please send your channel link or username:\n\n"
-            f"Or /cancel to go back.",
+            f"✅ Per Post: {views}\n\n**Step 4/5: Channel Link**\nPlease send your channel link:\n\nOr /cancel to go back.",
             parse_mode='Markdown'
         )
         return PLAN_CHANNEL
-        
     except ValueError:
         await update.message.reply_text("❌ Invalid number. Please enter a valid number:")
         return PLAN_VIEWS_PER_POST
 
 async def receive_channel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Receive channel link for standard plans, asks for drip-feed."""
     channel_username = await validate_and_normalize_channel(update)
     if not channel_username:
         return PLAN_CHANNEL
     
     context.user_data['channel_username'] = channel_username
     plan_type = context.user_data.get('plan_type')
-    plan_name = get_rate_display_name(plan_type)
     
-    # Corrected step numbering
     next_step = "5/5" if 'limited' in plan_type else "4/4"
     
     await update.message.reply_text(
-        f"✅ **{plan_name} Plan**\n"
-        f"✅ Channel: {channel_username}\n\n"
-        f"**Step {next_step}: Drip-Feed (Delay)**\n\n"
-        f"How many hours should the delivery be spread over **each day**?\n"
-        f"Enter a number of hours (e.g., `5` for 5 hours).\n"
-        f"Enter `0` for instant delivery.\n\n"
-        f"Or /cancel to go back.",
+        f"✅ Channel: {channel_username}\n\n**Step {next_step}: Drip-Feed (Delay)**\n\nHow many hours should the delivery be spread over **each day**?\nEnter `0` for instant.\n\nOr /cancel to go back.",
         parse_mode='Markdown'
     )
     return DRIP_FEED
 
-# --- NEW FUNCTION ---
 async def receive_drip_feed(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Receives drip-feed in hours, calculates delay_seconds, and shows summary."""
     try:
         drip_feed_hours = int(update.message.text.strip())
         if drip_feed_hours < 0 or drip_feed_hours > 72:
@@ -382,12 +277,13 @@ async def receive_drip_feed(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ Invalid number. Please enter a valid number (e.g., 5):")
         return DRIP_FEED
 
-    # All flows now merge here to show the final summary
     await show_final_summary(update, context)
     return CONFIRM_ORDER
 
 async def show_final_summary(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Calculates price and shows the final confirmation for all plan types."""
+    user = db.get_user(update.effective_user.id)
+    balance = float(user.get('buyer_wallet_balance', 0))
+    
     ud = context.user_data
     plan_type = ud.get('plan_type')
     plan_name = get_rate_display_name(plan_type)
@@ -398,151 +294,167 @@ async def show_final_summary(update: Update, context: ContextTypes.DEFAULT_TYPE)
     rate_map = {r['rate_type']: float(r['price_per_unit']) for r in rates}
     rate = rate_map.get(plan_type, 0)
     
-    summary = f"📊 **Order Summary**\n\n"
-    summary += f"**Plan:** {plan_name}\n"
-    summary += f"**Channel:** {channel_username}\n"
-    
-    total_quantity_per_period = 0 # Used for delay calculation
+    summary = f"📊 **Order Summary**\n\n**Plan:** {plan_name}\n**Channel:** {channel_username}\n"
+    total_quantity_per_period = 0 
     
     if 'join' in plan_type:
-        # --- Join & Leave Summary ---
         post_count = ud.get('post_count', 1)
         quantity_per_post = ud.get('quantity_per_post', 0)
         total_quantity = post_count * quantity_per_post
         price = total_quantity * rate
-        formula = f"{post_count} posts × {quantity_per_post} {'views' if 'view' in plan_type else 'reactions'}/post × ${rate:.4f}"
         
-        summary += f"**Posts to Service:** {post_count}\n"
-        summary += f"**{'Views' if 'view' in plan_type else 'Reactions'} per Post:** {quantity_per_post}\n"
+        summary += f"**Posts:** {post_count}\n**Per Post:** {quantity_per_post}\n"
         
-        ud['duration'] = 0 # One-time
+        ud['duration'] = 0
         ud['total_posts'] = post_count
         ud['views_per_post'] = quantity_per_post
-        ud['daily_posts_limit'] = 0 # Not applicable
-        total_quantity_per_period = total_quantity # Drip-feed is for the whole job
+        ud['daily_posts_limit'] = 0
+        total_quantity_per_period = total_quantity 
         
     elif 'limited' in plan_type:
-        # --- Limited (Daily) Summary ---
         days = ud.get('days')
         daily_posts = ud.get('daily_posts')
         views_per_post = ud.get('views_per_post')
         total_quantity = days * daily_posts * views_per_post
         price = total_quantity * rate
-        formula = f"{days} days × {daily_posts} posts/day × {views_per_post} {'views' if 'view' in plan_type else 'reactions'}/post × ${rate:.4f}"
         
-        summary += f"**Duration:** {days} days\n"
-        summary += f"**Daily Posts:** {daily_posts}\n"
-        summary += f"**{'Views' if 'view' in plan_type else 'Reactions'} Per Post:** {views_per_post}\n"
+        summary += f"**Duration:** {days} days\n**Daily Posts:** {daily_posts}\n**Per Post:** {views_per_post}\n"
         
         ud['total_posts'] = days * daily_posts
-        ud['daily_posts_limit'] = daily_posts # NEW
-        total_quantity_per_period = daily_posts * views_per_post # Drip-feed is for the *daily* amount
+        ud['daily_posts_limit'] = daily_posts
+        total_quantity_per_period = daily_posts * views_per_post
         
     elif 'unlimited' in plan_type:
-        # --- Unlimited (Daily) Summary ---
         days = ud.get('days')
         daily_amount = ud.get('daily_views_or_reactions')
         total_quantity = days * daily_amount
         price = total_quantity * rate
-        formula = f"{days} days × {daily_amount} {'views' if 'view' in plan_type else 'reactions'}/day × ${rate:.4f}"
         
-        summary += f"**Duration:** {days} days\n"
-        summary += f"**Daily {'Views' if 'view' in plan_type else 'Reactions'}:** {daily_amount}\n"
+        summary += f"**Duration:** {days} days\n**Daily:** {daily_amount}\n"
         
-        ud['total_posts'] = 0 # Unlimited
+        ud['total_posts'] = 0
         ud['views_per_post'] = daily_amount
-        ud['daily_posts_limit'] = 0 # Unlimited posts
-        total_quantity_per_period = daily_amount # Drip-feed is for the *daily* amount
+        ud['daily_posts_limit'] = 0
+        total_quantity_per_period = daily_amount
 
-    # --- Drip-Feed Calculation ---
-    delay_seconds = 1 # Default for instant
+    delay_seconds = 1 
     if drip_feed_hours > 0:
         total_seconds_per_period = drip_feed_hours * 3600
-        
         if total_quantity_per_period > 0:
             delay_seconds = max(1, total_seconds_per_period // total_quantity_per_period)
-        
-        summary += f"**Drip-Feed:** {drip_feed_hours} hours (Approx. {delay_seconds} sec delay per action)\n"
+        summary += f"**Drip-Feed:** {drip_feed_hours}h (~{delay_seconds}s delay)\n"
     else:
-        summary += f"**Drip-Feed:** Instant Delivery\n"
+        summary += f"**Drip-Feed:** Instant\n"
         
     ud['delay_seconds'] = delay_seconds
     ud['calculated_price'] = price
     
-    summary += f"\n**Calculation:**\n{formula}\n\n"
-    summary += f"💰 **Total Price: ${price:.2f}**\n\n"
-    summary += "Would you like to proceed to payment?"
-
-    keyboard = [
-        [InlineKeyboardButton("✅ Proceed to Payment", callback_data="confirm_order")],
-        [InlineKeyboardButton("❌ Cancel", callback_data="cancel_order")]
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
+    summary += f"\n💰 **Total Price: ${price:.2f}**"
     
-    await update.message.reply_text(
-        summary,
-        reply_markup=reply_markup,
-        parse_mode='Markdown'
-    )
+    # --- NEW: Dynamic Button Logic ---
+    if balance >= price:
+        summary += f"\n💳 **Wallet Balance:** ${balance:.2f} (✅ Sufficient)\n\nProceed to activate instantly?"
+        button_text = "✅ Pay from Wallet & Activate"
+    else:
+        summary += f"\n💳 **Wallet Balance:** ${balance:.2f} (❌ Insufficient)\n\nYou need ${price - balance:.2f} more."
+        button_text = "💳 Proceed to Deposit"
 
+    keyboard = [[InlineKeyboardButton(button_text, callback_data="confirm_order")], [InlineKeyboardButton("❌ Cancel", callback_data="cancel_order")]]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await update.message.reply_text(summary, reply_markup=reply_markup, parse_mode='Markdown')
 
 async def confirm_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Create pending order in database for ALL plan types"""
     query = update.callback_query
     await query.answer()
     
     user_id = query.from_user.id
     ud = context.user_data
     
+    # --- Check Wallet Balance Logic ---
+    user = db.get_user(user_id)
+    balance = float(user['buyer_wallet_balance'])
+    price = float(ud.get('calculated_price'))
+    
     plan_name = get_rate_display_name(ud.get('plan_type'))
-    price = ud.get('calculated_price')
     
-    order_id = db.create_saas_order(
-        user_id=user_id,
-        plan_type=ud.get('plan_type'),
-        duration=ud.get('duration'),
-        views_per_post=ud.get('views_per_post'),
-        total_posts=ud.get('total_posts'),
-        channel_username=ud.get('channel_username'),
-        price=price,
-        promo_code=None,
-        drip_feed_hours=ud.get('drip_feed_hours', 0),
-        delay_seconds=ud.get('delay_seconds', 1),
-        daily_posts_limit=ud.get('daily_posts_limit', 0) # NEW
-    )
-    
-    await query.edit_message_text(
-        f"✅ **Order Created Successfully!**\n\n"
-        f"**Order ID:** #{order_id}\n"
-        f"**Plan:** {plan_name}\n"
-        f"**Amount:** ${price:.2f}\n"
-        f"**Status:** Pending Payment\n\n"
-        f"💳 **Payment Instructions:**\n"
-        f"Please deposit ${price:.2f} to your buyer wallet using the Deposit option.\n\n"
-        f"Once payment is confirmed, your order will be activated automatically.\n\n"
-        f"Thank you for your order! 🎉",
-        parse_mode='Markdown'
-    )
+    if balance >= price:
+        # 1. Deduct Balance
+        db.update_user_balance(user_id, -price, balance_type='buyer')
+        
+        # 2. Create ACTIVE Order
+        order_id = db.create_saas_order(
+            user_id=user_id,
+            plan_type=ud.get('plan_type'),
+            duration=ud.get('duration'),
+            views_per_post=ud.get('views_per_post'),
+            total_posts=ud.get('total_posts'),
+            channel_username=ud.get('channel_username'),
+            price=price,
+            promo_code=None,
+            drip_feed_hours=ud.get('drip_feed_hours', 0),
+            delay_seconds=ud.get('delay_seconds', 1),
+            daily_posts_limit=ud.get('daily_posts_limit', 0),
+            status='active' # ACTIVATED IMMEDIATELY
+        )
+        
+        new_balance = balance - price
+        
+        await query.edit_message_text(
+            f"✅ **Order Activated Successfully!**\n\n"
+            f"**Order ID:** #{order_id}\n"
+            f"**Plan:** {plan_name}\n"
+            f"**Amount Paid:** ${price:.2f}\n"
+            f"**Remaining Balance:** ${new_balance:.2f}\n\n"
+            f"**Status:** 🚀 Active\n"
+            f"The service will start delivering shortly!",
+            parse_mode='Markdown'
+        )
+        
+    else:
+        # 1. Create PENDING Order
+        order_id = db.create_saas_order(
+            user_id=user_id,
+            plan_type=ud.get('plan_type'),
+            duration=ud.get('duration'),
+            views_per_post=ud.get('views_per_post'),
+            total_posts=ud.get('total_posts'),
+            channel_username=ud.get('channel_username'),
+            price=price,
+            promo_code=None,
+            drip_feed_hours=ud.get('drip_feed_hours', 0),
+            delay_seconds=ud.get('delay_seconds', 1),
+            daily_posts_limit=ud.get('daily_posts_limit', 0),
+            status='pending_payment'
+        )
+        
+        await query.edit_message_text(
+            f"⚠️ **Insufficient Funds**\n\n"
+            f"**Order ID:** #{order_id}\n"
+            f"**Plan Cost:** ${price:.2f}\n"
+            f"**Your Balance:** ${balance:.2f}\n\n"
+            f"**Status:** Pending Payment\n\n"
+            f"💳 **Instructions:**\n"
+            f"Please deposit at least **${(price - balance):.2f}** to your buyer wallet using the Deposit option.\n\n"
+            f"Once you deposit, the order will activate automatically!",
+            parse_mode='Markdown'
+        )
     
     context.user_data.clear()
     return ConversationHandler.END
 
 async def cancel_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Cancel order creation"""
     query = update.callback_query
     await query.answer()
-    await query.edit_message_text("❌ **Order Cancelled**\n\nYou can create a new order anytime.", parse_mode='Markdown')
+    await query.edit_message_text("❌ **Order Cancelled**", parse_mode='Markdown')
     context.user_data.clear()
     return ConversationHandler.END
 
 async def cancel_plan_purchase(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Cancel via /cancel command"""
     context.user_data.clear()
-    await update.message.reply_text("❌ **Order Cancelled**\n\nYou can create a new order anytime.")
+    await update.message.reply_text("❌ **Order Cancelled**")
     return ConversationHandler.END
 
 def get_buy_plan_handler():
-    """Returns the ConversationHandler for buying plans."""
     return ConversationHandler(
         entry_points=[
             CallbackQueryHandler(start_plan_purchase, pattern='^plan_')
