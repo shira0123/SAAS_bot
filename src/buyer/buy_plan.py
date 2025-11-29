@@ -139,10 +139,18 @@ async def receive_join_leave_quantity(update: Update, context: ContextTypes.DEFA
         context.user_data['quantity_per_post'] = quantity
         
         await update.message.reply_text(
-            f"✅ Quantity: {quantity}\n\n**Step 3/4: Channel Link**\nPlease send your channel link or username:\n\nOr /cancel to go back.",
+            f"✅ Quantity: {quantity}\n\n"
+            f"**Step 3/4: Channel Link**\n\n"
+            f"Please send your channel link or username.\n\n"
+            f"⚠️ **IMPORTANT FOR PRIVATE CHANNELS:**\n"
+            f"If your channel is **Private**, you MUST send the **Invite Link** (e.g., `https://t.me/+AbCd...`).\n"
+            f"If you send a username for a private channel, the order will fail!\n\n"
+            f"Send link now:",
             parse_mode='Markdown'
         )
-        return JOIN_LEAVE_CHANNEL
+        # IMPORTANT: This return statement is critical for moving to the next step
+        return JOIN_LEAVE_CHANNEL 
+        
     except ValueError:
         await update.message.reply_text("❌ Invalid number. Please enter a valid number:")
         return JOIN_LEAVE_QUANTITY
@@ -150,6 +158,7 @@ async def receive_join_leave_quantity(update: Update, context: ContextTypes.DEFA
 async def receive_join_leave_channel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     channel_username = await validate_and_normalize_channel(update)
     if not channel_username:
+        await update.message.reply_text("❌ Invalid channel link. Please check and try again:")
         return JOIN_LEAVE_CHANNEL
     
     context.user_data['channel_username'] = channel_username
@@ -171,7 +180,11 @@ async def validate_and_normalize_channel(update: Update):
             parts = channel.split('t.me/')
             return '@' + parts[1].strip('/') if len(parts) > 1 else None
     else:
-        return '@' + channel.lstrip('@')
+        # Assume it's a username if it doesn't look like a link
+        clean_channel = channel.lstrip('@')
+        if re.match(r'^\w+$', clean_channel):
+            return '@' + clean_channel
+        return None
 
 async def receive_plan_days(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
@@ -251,6 +264,7 @@ async def receive_views_per_post(update: Update, context: ContextTypes.DEFAULT_T
 async def receive_channel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     channel_username = await validate_and_normalize_channel(update)
     if not channel_username:
+        await update.message.reply_text("❌ Invalid channel link. Please try again:")
         return PLAN_CHANNEL
     
     context.user_data['channel_username'] = channel_username
@@ -351,7 +365,7 @@ async def show_final_summary(update: Update, context: ContextTypes.DEFAULT_TYPE)
     
     summary += f"\n💰 **Total Price: ${price:.2f}**"
     
-    # --- NEW: Dynamic Button Logic ---
+    # --- Dynamic Button Logic ---
     if balance >= price:
         summary += f"\n💳 **Wallet Balance:** ${balance:.2f} (✅ Sufficient)\n\nProceed to activate instantly?"
         button_text = "✅ Pay from Wallet & Activate"
@@ -370,7 +384,7 @@ async def confirm_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = query.from_user.id
     ud = context.user_data
     
-    # --- Check Wallet Balance Logic ---
+    # Check Wallet Balance Logic
     user = db.get_user(user_id)
     balance = float(user['buyer_wallet_balance'])
     price = float(ud.get('calculated_price'))
@@ -471,7 +485,7 @@ def get_buy_plan_handler():
             JOIN_LEAVE_QUANTITY: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_join_leave_quantity)],
             JOIN_LEAVE_CHANNEL: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_join_leave_channel)],
             
-            # --- NEW: Shared Drip-Feed State ---
+            # --- Shared Drip-Feed State ---
             DRIP_FEED: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_drip_feed)],
             
             # --- Shared Final State ---

@@ -1181,19 +1181,29 @@ class Database:
         cursor.close()
         return results
     
-    def get_available_accounts(self, limit=100):
-        """Get available accounts for service delivery (active, not banned, not full, joins < 500)"""
+    def get_available_accounts(self, limit=100, exclude_ids=None):
+        """Get available accounts, optionally excluding specific IDs"""
         cursor = self.connection.cursor()
-        cursor.execute("""
+        
+        query = """
             SELECT id, phone_number, session_string, join_count, max_joins
             FROM sold_accounts
             WHERE account_status = 'active' 
             AND is_banned = FALSE 
             AND is_full = FALSE
             AND join_count < 500
-            ORDER BY join_count ASC, last_used ASC NULLS FIRST
-            LIMIT %s
-        """, (limit,))
+        """
+        
+        params = []
+        
+        if exclude_ids and len(exclude_ids) > 0:
+            query += " AND id NOT IN %s"
+            params.append(tuple(exclude_ids))
+            
+        query += " ORDER BY join_count ASC, last_used ASC NULLS FIRST LIMIT %s"
+        params.append(limit)
+        
+        cursor.execute(query, tuple(params))
         results = cursor.fetchall()
         cursor.close()
         return results
