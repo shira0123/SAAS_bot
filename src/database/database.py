@@ -846,6 +846,7 @@ class Database:
             SELECT 
                 id,
                 phone_number,
+                session_string,
                 account_status,
                 join_count,
                 max_joins,
@@ -896,10 +897,11 @@ class Database:
     
     def update_account_status(self, account_id, status, is_banned=None):
         cursor = self.connection.cursor()
+        # --- FIX: Removed reference to 'updated_at' column ---
         if is_banned is not None:
             cursor.execute("""
                 UPDATE sold_accounts
-                SET account_status = %s, is_banned = %s, updated_at = CURRENT_TIMESTAMP
+                SET account_status = %s, is_banned = %s
                 WHERE id = %s
             """, (status, is_banned, account_id))
         else:
@@ -944,7 +946,6 @@ class Database:
         cursor.close()
         return True
     
-    # --- MODIFIED: Added 'status' parameter ---
     def create_saas_order(self, user_id, plan_type, duration, views_per_post, total_posts, channel_username, price, promo_code=None, drip_feed_hours=0, delay_seconds=1, daily_posts_limit=0, status='pending_payment'):
         cursor = self.connection.cursor()
         cursor.execute("""
@@ -1138,7 +1139,6 @@ class Database:
         cursor.close()
         return results
     
-    # --- FIXED verify_deposit: removed 'OR utr = %s' ---
     def verify_deposit(self, transaction_id, amount, admin_id):
         cursor = self.connection.cursor()
         cursor.execute("""
@@ -1182,7 +1182,7 @@ class Database:
         return results
     
     def get_available_accounts(self, limit=100, exclude_ids=None):
-        """Get available accounts, optionally excluding specific IDs"""
+        """Get available accounts for service delivery (active, not banned, not full, joins < 500)"""
         cursor = self.connection.cursor()
         
         query = """
@@ -1196,9 +1196,10 @@ class Database:
         
         params = []
         
+        # --- NEW: Handle excluded IDs ---
         if exclude_ids and len(exclude_ids) > 0:
-            query += " AND id NOT IN %s"
-            params.append(tuple(exclude_ids))
+            query += " AND id != ALL(%s)"
+            params.append(exclude_ids)
             
         query += " ORDER BY join_count ASC, last_used ASC NULLS FIRST LIMIT %s"
         params.append(limit)

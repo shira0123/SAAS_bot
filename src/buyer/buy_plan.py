@@ -1,5 +1,7 @@
 import logging
 import re
+import random
+import string
 from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardRemove
 from telegram.ext import ContextTypes, ConversationHandler, MessageHandler, filters, CallbackQueryHandler, CommandHandler
 from src.database.database import Database
@@ -21,6 +23,27 @@ db = Database()
     JOIN_LEAVE_CHANNEL,
 ) = range(9)
 
+# --- Helper to handle missing users ---
+def ensure_user_exists(tg_user):
+    """Ensure user exists in DB, creating if necessary."""
+    user = db.get_user(tg_user.id)
+    if not user:
+        # Generate a temporary referral code
+        referral_code = ''.join(random.choices(string.ascii_uppercase + string.digits, k=8))
+        while db.get_user_by_referral(referral_code):
+            referral_code = ''.join(random.choices(string.ascii_uppercase + string.digits, k=8))
+            
+        db.create_user(
+            user_id=tg_user.id,
+            username=tg_user.username,
+            first_name=tg_user.first_name,
+            last_name=tg_user.last_name,
+            referral_code=referral_code,
+            referred_by=None
+        )
+        user = db.get_user(tg_user.id)
+        logger.info(f"Re-created missing user {tg_user.id} during plan purchase.")
+    return user
 
 async def show_plan_types(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Show all 8 plan type options"""
@@ -132,25 +155,18 @@ async def receive_join_leave_post_count(update: Update, context: ContextTypes.DE
 async def receive_join_leave_quantity(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         quantity = int(update.message.text.strip())
-        if quantity < 10:
-            await update.message.reply_text("❌ Quantity must be at least 10:")
+        # Changed limit to 1 for testing purposes
+        if quantity < 1:
+            await update.message.reply_text("❌ Quantity must be at least 1:")
             return JOIN_LEAVE_QUANTITY
         
         context.user_data['quantity_per_post'] = quantity
         
         await update.message.reply_text(
-            f"✅ Quantity: {quantity}\n\n"
-            f"**Step 3/4: Channel Link**\n\n"
-            f"Please send your channel link or username.\n\n"
-            f"⚠️ **IMPORTANT FOR PRIVATE CHANNELS:**\n"
-            f"If your channel is **Private**, you MUST send the **Invite Link** (e.g., `https://t.me/+AbCd...`).\n"
-            f"If you send a username for a private channel, the order will fail!\n\n"
-            f"Send link now:",
+            f"✅ Quantity: {quantity}\n\n**Step 3/4: Channel Link**\nPlease send your channel link or username:\n\nOr /cancel to go back.",
             parse_mode='Markdown'
         )
-        # IMPORTANT: This return statement is critical for moving to the next step
-        return JOIN_LEAVE_CHANNEL 
-        
+        return JOIN_LEAVE_CHANNEL
     except ValueError:
         await update.message.reply_text("❌ Invalid number. Please enter a valid number:")
         return JOIN_LEAVE_QUANTITY
@@ -158,7 +174,6 @@ async def receive_join_leave_quantity(update: Update, context: ContextTypes.DEFA
 async def receive_join_leave_channel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     channel_username = await validate_and_normalize_channel(update)
     if not channel_username:
-        await update.message.reply_text("❌ Invalid channel link. Please check and try again:")
         return JOIN_LEAVE_CHANNEL
     
     context.user_data['channel_username'] = channel_username
@@ -180,11 +195,7 @@ async def validate_and_normalize_channel(update: Update):
             parts = channel.split('t.me/')
             return '@' + parts[1].strip('/') if len(parts) > 1 else None
     else:
-        # Assume it's a username if it doesn't look like a link
-        clean_channel = channel.lstrip('@')
-        if re.match(r'^\w+$', clean_channel):
-            return '@' + clean_channel
-        return None
+        return '@' + channel.lstrip('@')
 
 async def receive_plan_days(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
@@ -264,13 +275,14 @@ async def receive_views_per_post(update: Update, context: ContextTypes.DEFAULT_T
 async def receive_channel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     channel_username = await validate_and_normalize_channel(update)
     if not channel_username:
-        await update.message.reply_text("❌ Invalid channel link. Please try again:")
         return PLAN_CHANNEL
     
     context.user_data['channel_username'] = channel_username
     plan_type = context.user_data.get('plan_type')
     
-    next_step = "5/5" if 'limited' in plan_type else "4/4"
+    # "unlimited" plans only have 4 steps (Days, Daily Amount, Channel, Drip)
+    # "limited" plans have 5 steps (Days, Daily Posts, Views/Post, Channel, Drip)
+    next_step = "5/5" if 'limited' in plan_type and 'unlimited' not in plan_type else "4/4"
     
     await update.message.reply_text(
         f"✅ Channel: {channel_username}\n\n**Step {next_step}: Drip-Feed (Delay)**\n\nHow many hours should the delivery be spread over **each day**?\nEnter `0` for instant.\n\nOr /cancel to go back.",
@@ -295,7 +307,7 @@ async def receive_drip_feed(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return CONFIRM_ORDER
 
 async def show_final_summary(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = db.get_user(update.effective_user.id)
+    user = ensure_user_exists(update.effective_user)
     balance = float(user.get('buyer_wallet_balance', 0))
     
     ud = context.user_data
@@ -311,6 +323,7 @@ async def show_final_summary(update: Update, context: ContextTypes.DEFAULT_TYPE)
     summary = f"📊 **Order Summary**\n\n**Plan:** {plan_name}\n**Channel:** {channel_username}\n"
     total_quantity_per_period = 0 
     
+    # --- FIX: Check 'unlimited' BEFORE 'limited' because 'unlimited' contains 'limited' string ---
     if 'join' in plan_type:
         post_count = ud.get('post_count', 1)
         quantity_per_post = ud.get('quantity_per_post', 0)
@@ -325,19 +338,6 @@ async def show_final_summary(update: Update, context: ContextTypes.DEFAULT_TYPE)
         ud['daily_posts_limit'] = 0
         total_quantity_per_period = total_quantity 
         
-    elif 'limited' in plan_type:
-        days = ud.get('days')
-        daily_posts = ud.get('daily_posts')
-        views_per_post = ud.get('views_per_post')
-        total_quantity = days * daily_posts * views_per_post
-        price = total_quantity * rate
-        
-        summary += f"**Duration:** {days} days\n**Daily Posts:** {daily_posts}\n**Per Post:** {views_per_post}\n"
-        
-        ud['total_posts'] = days * daily_posts
-        ud['daily_posts_limit'] = daily_posts
-        total_quantity_per_period = daily_posts * views_per_post
-        
     elif 'unlimited' in plan_type:
         days = ud.get('days')
         daily_amount = ud.get('daily_views_or_reactions')
@@ -350,6 +350,19 @@ async def show_final_summary(update: Update, context: ContextTypes.DEFAULT_TYPE)
         ud['views_per_post'] = daily_amount
         ud['daily_posts_limit'] = 0
         total_quantity_per_period = daily_amount
+        
+    elif 'limited' in plan_type:
+        days = ud.get('days')
+        daily_posts = ud.get('daily_posts')
+        views_per_post = ud.get('views_per_post')
+        total_quantity = days * daily_posts * views_per_post
+        price = total_quantity * rate
+        
+        summary += f"**Duration:** {days} days\n**Daily Posts:** {daily_posts}\n**Per Post:** {views_per_post}\n"
+        
+        ud['total_posts'] = days * daily_posts
+        ud['daily_posts_limit'] = daily_posts
+        total_quantity_per_period = daily_posts * views_per_post
 
     delay_seconds = 1 
     if drip_feed_hours > 0:
@@ -365,7 +378,7 @@ async def show_final_summary(update: Update, context: ContextTypes.DEFAULT_TYPE)
     
     summary += f"\n💰 **Total Price: ${price:.2f}**"
     
-    # --- Dynamic Button Logic ---
+    # --- NEW: Dynamic Button Logic ---
     if balance >= price:
         summary += f"\n💳 **Wallet Balance:** ${balance:.2f} (✅ Sufficient)\n\nProceed to activate instantly?"
         button_text = "✅ Pay from Wallet & Activate"
@@ -384,22 +397,26 @@ async def confirm_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = query.from_user.id
     ud = context.user_data
     
-    # Check Wallet Balance Logic
-    user = db.get_user(user_id)
+    user = ensure_user_exists(query.from_user)
+    
     balance = float(user['buyer_wallet_balance'])
     price = float(ud.get('calculated_price'))
     
     plan_name = get_rate_display_name(ud.get('plan_type'))
     
+    # --- FIX: Handle 'days' vs 'duration' key mismatch ---
+    # Standard plans use 'days', Join&Leave use 'duration' (set to 0)
+    final_duration = ud.get('duration') 
+    if final_duration is None:
+        final_duration = ud.get('days', 0)
+
     if balance >= price:
-        # 1. Deduct Balance
         db.update_user_balance(user_id, -price, balance_type='buyer')
         
-        # 2. Create ACTIVE Order
         order_id = db.create_saas_order(
             user_id=user_id,
             plan_type=ud.get('plan_type'),
-            duration=ud.get('duration'),
+            duration=final_duration, # <--- USE FIXED VARIABLE
             views_per_post=ud.get('views_per_post'),
             total_posts=ud.get('total_posts'),
             channel_username=ud.get('channel_username'),
@@ -408,7 +425,7 @@ async def confirm_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
             drip_feed_hours=ud.get('drip_feed_hours', 0),
             delay_seconds=ud.get('delay_seconds', 1),
             daily_posts_limit=ud.get('daily_posts_limit', 0),
-            status='active' # ACTIVATED IMMEDIATELY
+            status='active'
         )
         
         new_balance = balance - price
@@ -425,11 +442,10 @@ async def confirm_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         
     else:
-        # 1. Create PENDING Order
         order_id = db.create_saas_order(
             user_id=user_id,
             plan_type=ud.get('plan_type'),
-            duration=ud.get('duration'),
+            duration=final_duration, # <--- USE FIXED VARIABLE
             views_per_post=ud.get('views_per_post'),
             total_posts=ud.get('total_posts'),
             channel_username=ud.get('channel_username'),
@@ -485,7 +501,7 @@ def get_buy_plan_handler():
             JOIN_LEAVE_QUANTITY: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_join_leave_quantity)],
             JOIN_LEAVE_CHANNEL: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_join_leave_channel)],
             
-            # --- Shared Drip-Feed State ---
+            # --- NEW: Shared Drip-Feed State ---
             DRIP_FEED: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_drip_feed)],
             
             # --- Shared Final State ---
