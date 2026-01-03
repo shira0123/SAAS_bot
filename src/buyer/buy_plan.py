@@ -23,9 +23,41 @@ db = Database()
     JOIN_LEAVE_CHANNEL,
 ) = range(9)
 
+async def cancel_plan_purchase(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Robustly clears state and returns to menu."""
+    context.user_data.clear()
+    msg = "❌ Plan purchase cancelled."
+    
+    if update.callback_query:
+        await update.callback_query.answer()
+        # Explicitly edit to a neutral state
+        await update.callback_query.edit_message_text(msg)
+    else:
+        await update.message.reply_text(msg, reply_markup=ReplyKeyboardRemove())
+        
+    # Crucial: END the conversation so the handler releases control
+    return ConversationHandler.END
+
+# Ensure the buy_plan handler uses unique patterns for its internal cancel button
+# In your keyboard definitions within buy_plan.py, use:
+# callback_data="abort_buy" 
+
+def get_buy_plan_handler():
+    return ConversationHandler(
+        entry_points=[CallbackQueryHandler(start_plan_purchase, pattern='^plan_')],
+        states={
+            # ... existing states
+        },
+        fallbacks=[
+            CommandHandler('cancel', cancel_plan_purchase),
+            CallbackQueryHandler(cancel_plan_purchase, pattern='^abort_buy$')
+        ],
+        name="buy_plan",
+        persistent=False
+    )
 # --- Helper to handle missing users ---
 def ensure_user_exists(tg_user):
-    """Ensure user exists in DB, creating if necessary."""
+    """Ensure user exists in DB, creating if necessary to prevent Foreign Key errors."""
     user = db.get_user(tg_user.id)
     if not user:
         # Generate a temporary referral code
@@ -48,10 +80,10 @@ def ensure_user_exists(tg_user):
 async def show_plan_types(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Show all 8 plan type options"""
     keyboard = [
-        [InlineKeyboardButton("💎 Unlimited Views", callback_data="plan_unlimited_views")],
-        [InlineKeyboardButton("🎯 Limited Views", callback_data="plan_limited_views")],
-        [InlineKeyboardButton("❤️ Unlimited Reactions", callback_data="plan_unlimited_reactions")],
-        [InlineKeyboardButton("🎪 Limited Reactions", callback_data="plan_limited_reactions")],
+        [InlineKeyboardButton("💎 Unlimited Views", callback_data="plan_per_day_view")],
+        [InlineKeyboardButton("🎯 Limited Views", callback_data="plan_per_view")],
+        [InlineKeyboardButton("❤️ Unlimited Reactions", callback_data="plan_per_day_reaction")],
+        [InlineKeyboardButton("🎪 Limited Reactions", callback_data="plan_per_reaction")],
         [InlineKeyboardButton("🚀 View N Posts & Leave", callback_data="plan_join_view_n_posts")],
         [InlineKeyboardButton("🚀 React to N Posts & Leave", callback_data="plan_join_react_n_posts")],
         [InlineKeyboardButton("⚡ View Recent Post & Leave", callback_data="plan_join_view_recent_post")],
@@ -75,8 +107,8 @@ async def show_plan_types(update: Update, context: ContextTypes.DEFAULT_TYPE):
 **Plan Types:**
 
 **Standard Plans (Daily Service):**
-• **Unlimited Views/Reactions**: Pay per day for continuous service.
-• **Limited Views/Reactions**: Pay per post for a set number of days.
+• **Unlimited Plans**: Flat daily rate. Delivers views/reactions to ALL posts made that day.
+• **Limited Plans**: Pay per view/reaction. Set a specific limit on posts per day.
 
 **Join & Leave Plans (One-Time Service):**
 • **View/React N Posts**: Accounts join, service N posts, then leave.
@@ -95,19 +127,12 @@ async def start_plan_purchase(update: Update, context: ContextTypes.DEFAULT_TYPE
     query = update.callback_query
     await query.answer()
     
-    plan_mapping = {
-        'plan_unlimited_views': 'unlimited_views',
-        'plan_limited_views': 'limited_views',
-        'plan_unlimited_reactions': 'unlimited_reactions',
-        'plan_limited_reactions': 'limited_reactions',
-        'plan_join_view_n_posts': 'join_view_n_posts',
-        'plan_join_react_n_posts': 'join_react_n_posts',
-        'plan_join_view_recent_post': 'join_view_recent_post',
-        'plan_join_react_recent_post': 'join_react_recent_post',
-    }
-    
-    plan_type = plan_mapping.get(query.data)
+    # Extract plan_type from callback data (remove 'plan_' prefix)
+    plan_type = query.data.replace('plan_', '')
     context.user_data['plan_type'] = plan_type
+    
+    # Auto-register user if missing
+    ensure_user_exists(update.effective_user)
     
     plan_name = get_rate_display_name(plan_type)
     
@@ -155,7 +180,6 @@ async def receive_join_leave_post_count(update: Update, context: ContextTypes.DE
 async def receive_join_leave_quantity(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         quantity = int(update.message.text.strip())
-        # Changed limit to 1 for testing purposes
         if quantity < 1:
             await update.message.reply_text("❌ Quantity must be at least 1:")
             return JOIN_LEAVE_QUANTITY
@@ -207,15 +231,21 @@ async def receive_plan_days(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data['days'] = days
         plan_type = context.user_data.get('plan_type')
         
-        if 'unlimited' in plan_type:
+        # Check for Unlimited Plan ('per_day' key)
+        if 'per_day' in plan_type:
             await update.message.reply_text(
-                f"✅ Duration: {days} days\n\n**Step 2/4: Daily {'Views' if 'views' in plan_type else 'Reactions'}**\nHow many per day?\n\nOr /cancel to go back.",
+                f"✅ Duration: {days} days\n\n**Step 2/4: Views/Reactions Per Post**\n"
+                f"Since this is an Unlimited plan, every post will receive this amount.\n"
+                f"How many per post?\n\nOr /cancel to go back.",
                 parse_mode='Markdown'
             )
             return PLAN_DAILY_POSTS 
         else:
+            # Limited Plan
             await update.message.reply_text(
-                f"✅ Duration: {days} days\n\n**Step 2/5: Daily Posts**\nHow many posts per day to service?\n\nOr /cancel to go back.",
+                f"✅ Duration: {days} days\n\n**Step 2/5: Daily Post Limit**\n"
+                f"How many posts per day should receive service? (e.g. 5)\n"
+                f"Any posts after this limit will be ignored.\n\nOr /cancel to go back.",
                 parse_mode='Markdown'
             )
             return PLAN_DAILY_POSTS
@@ -225,31 +255,34 @@ async def receive_plan_days(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def receive_daily_posts(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
-        daily_amount = int(update.message.text.strip())
-        if daily_amount < 1:
+        input_value = int(update.message.text.strip())
+        if input_value < 1:
             await update.message.reply_text("❌ Please enter a positive number:")
             return PLAN_DAILY_POSTS
         
         plan_type = context.user_data.get('plan_type')
         
-        if 'unlimited' in plan_type:
-            context.user_data['daily_views_or_reactions'] = daily_amount
-            context.user_data['views_per_post'] = daily_amount
-            context.user_data['total_posts'] = 0
+        if 'per_day' in plan_type: # Unlimited Plan
+            # input_value here is "Views Per Post"
+            context.user_data['views_per_post'] = input_value
+            context.user_data['daily_posts_limit'] = 0 # 0 means unlimited
+            context.user_data['total_posts'] = 0 # Unlimited
             
             await update.message.reply_text(
-                f"✅ Daily Amount: {daily_amount}\n\n**Step 3/4: Channel Link**\nPlease send your channel link:\n\nOr /cancel to go back.",
+                f"✅ Per Post: {input_value}\n\n**Step 3/4: Channel Link**\nPlease send your channel link:\n\nOr /cancel to go back.",
                 parse_mode='Markdown'
             )
             return PLAN_CHANNEL
-        else:
-            context.user_data['daily_posts'] = daily_amount
+        else: # Limited Plan
+            # input_value here is "Daily Post Limit"
+            context.user_data['daily_posts_limit'] = input_value
             
             await update.message.reply_text(
-                f"✅ Daily Posts: {daily_amount}\n\n**Step 3/5: {'Views' if 'views' in plan_type else 'Reactions'} Per Post**\nHow many per post?\n\nOr /cancel to go back.",
+                f"✅ Daily Limit: {input_value} posts\n\n**Step 3/5: Views/Reactions Per Post**\nHow many per post?\n\nOr /cancel to go back.",
                 parse_mode='Markdown'
             )
             return PLAN_VIEWS_PER_POST
+            
     except ValueError:
         await update.message.reply_text("❌ Invalid number. Please enter a valid number:")
         return PLAN_DAILY_POSTS
@@ -280,9 +313,9 @@ async def receive_channel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data['channel_username'] = channel_username
     plan_type = context.user_data.get('plan_type')
     
-    # "unlimited" plans only have 4 steps (Days, Daily Amount, Channel, Drip)
-    # "limited" plans have 5 steps (Days, Daily Posts, Views/Post, Channel, Drip)
-    next_step = "5/5" if 'limited' in plan_type and 'unlimited' not in plan_type else "4/4"
+    # "unlimited" (per_day) plans only have 4 steps
+    # "limited" plans have 5 steps
+    next_step = "5/5" if 'per_day' not in plan_type else "4/4"
     
     await update.message.reply_text(
         f"✅ Channel: {channel_username}\n\n**Step {next_step}: Drip-Feed (Delay)**\n\nHow many hours should the delivery be spread over **each day**?\nEnter `0` for instant.\n\nOr /cancel to go back.",
@@ -323,7 +356,6 @@ async def show_final_summary(update: Update, context: ContextTypes.DEFAULT_TYPE)
     summary = f"📊 **Order Summary**\n\n**Plan:** {plan_name}\n**Channel:** {channel_username}\n"
     total_quantity_per_period = 0 
     
-    # --- FIX: Check 'unlimited' BEFORE 'limited' because 'unlimited' contains 'limited' string ---
     if 'join' in plan_type:
         post_count = ud.get('post_count', 1)
         quantity_per_post = ud.get('quantity_per_post', 0)
@@ -338,30 +370,29 @@ async def show_final_summary(update: Update, context: ContextTypes.DEFAULT_TYPE)
         ud['daily_posts_limit'] = 0
         total_quantity_per_period = total_quantity 
         
-    elif 'unlimited' in plan_type:
+    elif 'per_day' in plan_type: # Unlimited Plan
         days = ud.get('days')
-        daily_amount = ud.get('daily_views_or_reactions')
-        total_quantity = days * daily_amount
+        views_per_post = ud.get('views_per_post')
+        # Unlimited Plan Pricing: rate * days * views_per_post
+        total_quantity = days * views_per_post
         price = total_quantity * rate
         
-        summary += f"**Duration:** {days} days\n**Daily:** {daily_amount}\n"
+        summary += f"**Duration:** {days} days\n**Views/Reacts per Post:** {views_per_post}\n**Posts per Day:** Unlimited\n"
         
         ud['total_posts'] = 0
-        ud['views_per_post'] = daily_amount
         ud['daily_posts_limit'] = 0
-        total_quantity_per_period = daily_amount
+        total_quantity_per_period = views_per_post
         
-    elif 'limited' in plan_type:
+    else: # Limited Plan
         days = ud.get('days')
-        daily_posts = ud.get('daily_posts')
+        daily_posts = ud.get('daily_posts_limit')
         views_per_post = ud.get('views_per_post')
         total_quantity = days * daily_posts * views_per_post
         price = total_quantity * rate
         
-        summary += f"**Duration:** {days} days\n**Daily Posts:** {daily_posts}\n**Per Post:** {views_per_post}\n"
+        summary += f"**Duration:** {days} days\n**Daily Limit:** {daily_posts} posts\n**Per Post:** {views_per_post}\n"
         
         ud['total_posts'] = days * daily_posts
-        ud['daily_posts_limit'] = daily_posts
         total_quantity_per_period = daily_posts * views_per_post
 
     delay_seconds = 1 
@@ -378,7 +409,6 @@ async def show_final_summary(update: Update, context: ContextTypes.DEFAULT_TYPE)
     
     summary += f"\n💰 **Total Price: ${price:.2f}**"
     
-    # --- NEW: Dynamic Button Logic ---
     if balance >= price:
         summary += f"\n💳 **Wallet Balance:** ${balance:.2f} (✅ Sufficient)\n\nProceed to activate instantly?"
         button_text = "✅ Pay from Wallet & Activate"
@@ -404,8 +434,6 @@ async def confirm_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     plan_name = get_rate_display_name(ud.get('plan_type'))
     
-    # --- FIX: Handle 'days' vs 'duration' key mismatch ---
-    # Standard plans use 'days', Join&Leave use 'duration' (set to 0)
     final_duration = ud.get('duration') 
     if final_duration is None:
         final_duration = ud.get('days', 0)
@@ -416,7 +444,7 @@ async def confirm_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
         order_id = db.create_saas_order(
             user_id=user_id,
             plan_type=ud.get('plan_type'),
-            duration=final_duration, # <--- USE FIXED VARIABLE
+            duration=final_duration,
             views_per_post=ud.get('views_per_post'),
             total_posts=ud.get('total_posts'),
             channel_username=ud.get('channel_username'),
@@ -445,7 +473,7 @@ async def confirm_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
         order_id = db.create_saas_order(
             user_id=user_id,
             plan_type=ud.get('plan_type'),
-            duration=final_duration, # <--- USE FIXED VARIABLE
+            duration=final_duration,
             views_per_post=ud.get('views_per_post'),
             total_posts=ud.get('total_posts'),
             channel_username=ud.get('channel_username'),
@@ -480,8 +508,14 @@ async def cancel_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ConversationHandler.END
 
 async def cancel_plan_purchase(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Robustly clears state and returns to menu."""
     context.user_data.clear()
-    await update.message.reply_text("❌ **Order Cancelled**")
+    msg = "❌ Plan purchase cancelled."
+    if update.callback_query:
+        await update.callback_query.answer()
+        await update.callback_query.edit_message_text(msg)
+    else:
+        await update.message.reply_text(msg, reply_markup=ReplyKeyboardRemove())
     return ConversationHandler.END
 
 def get_buy_plan_handler():
@@ -511,7 +545,8 @@ def get_buy_plan_handler():
             ]
         },
         fallbacks=[
-            CommandHandler('cancel', cancel_plan_purchase)
+            CommandHandler('cancel', cancel_plan_purchase),
+            CallbackQueryHandler(cancel_plan_purchase, pattern='^cancel_buy$')
         ],
         name="buy_plan",
         persistent=False

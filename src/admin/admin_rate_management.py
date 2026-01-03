@@ -10,7 +10,13 @@ db = Database()
 SET_RATE_VALUE = range(1)
 
 def get_rate_display_name(rate_type):
-    """Converts rate_type key to a readable name."""
+    """
+    Safely converts rate_type key to a readable name.
+    Handles NoneType to prevent crashes.
+    """
+    if not rate_type:
+        return "Unknown Plan"
+        
     rate_names = {
         'per_view': '💎 Per View (Limited)',
         'per_day_view': '📅 Per Day View (Unlimited)',
@@ -21,7 +27,9 @@ def get_rate_display_name(rate_type):
         'join_view_recent_post': '⚡ View Recent Post & Leave',
         'join_react_recent_post': '⚡ React Recent Post & Leave'
     }
-    return rate_names.get(rate_type, rate_type.replace('_', ' ').title())
+    
+    # Return the mapped name, or format the key if not found
+    return rate_names.get(rate_type, str(rate_type).replace('_', ' ').title())
 
 async def show_rate_management(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Show the rate management menu with all 8 rates."""
@@ -150,12 +158,10 @@ async def receive_new_rate_value(update: Update, context: ContextTypes.DEFAULT_T
 async def cancel_rate_update(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Cancel the rate update and show main rates menu."""
     context.user_data.clear()
-    # We need to call the function that shows the main menu
-    # This requires an update object, so we use the query if available
     if update.callback_query:
         await show_rate_management(update.callback_query, context)
     else:
-        await show_rate_management(update, context) # Fallback
+        await show_rate_management(update, context) 
     
     return ConversationHandler.END
 

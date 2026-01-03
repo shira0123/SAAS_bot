@@ -1,12 +1,13 @@
 [project]
 name = "repl-nix-workspace"
 version = "0.1.0"
-description = "Add your description here"
+description = "Telegram Bot SaaS"
 requires-python = ">=3.11"
 dependencies = [
     "psycopg2-binary>=2.9.11",
     "python-dotenv>=1.2.1",
     "python-telegram-bot>=22.5",
     "schedule>=1.2.2",
-    "telethon>=1.41.2",
+    "pyrogram>=2.0.106",
+    "tgcrypto>=1.2.5"
 ]

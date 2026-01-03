@@ -1,6 +1,6 @@
 import logging
 import os
-from telegram import Update, ReplyKeyboardMarkup, KeyboardButton
+from telegram import Update, ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -11,7 +11,6 @@ from telegram.ext import (
     ContextTypes,
 )
 from src.database.database import Database
-
 from src.database.config import BUYER_BOT_TOKEN, ADMIN_IDS
 
 import src.buyer.buyer_menu as buyer_menu
@@ -29,7 +28,6 @@ import src.admin.saas_admin_reports as saas_admin_reports
 import src.admin.broadcast_admin as broadcast_admin
 import src.admin.admin_reseller_management as admin_reseller_management
 import src.utils.account_pool_manager as account_pool_manager
-# DO NOT IMPORT FROM seller_profile
 
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -55,7 +53,7 @@ def get_admin_menu():
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
 
 async def admin_back_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handles 'Back' buttons in admin menus, shows main admin menu."""
+    """Handles 'Back' buttons in admin menus."""
     query = update.callback_query
     await query.answer()
     await query.edit_message_text(
@@ -63,9 +61,8 @@ async def admin_back_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
         reply_markup=get_admin_menu()
     )
 
-# --- NEW: Self-contained support handler ---
 async def buyer_support_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handles the 'Support' button for the buyer bot."""
+    """Handles the 'Support' button."""
     message = """
 💬 **Support**
 
@@ -76,15 +73,12 @@ Need help with your plans or deposits? We're here for you!
 • How does Drip-Feed work? We spread your order over the hours you select.
 
 **Contact Admin:**
-For any issues, questions, or concerns, please contact our support team.
-
-**Business Hours:**
-Monday - Sunday: 9 AM - 11 PM (UTC)
+For any issues, please contact our support team.
 """
     await update.message.reply_text(message, parse_mode='Markdown')
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handles the /start command for the buyer bot."""
+    """Handles the /start command."""
     user = update.effective_user
     existing_user = db.get_user(user.id)
     
@@ -98,7 +92,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             ref_code = context.args[0]
             if ref_code.startswith('buyref_'):
                 ref_code = ref_code.replace('buyref_', '')
-                
             referrer = db.get_user_by_referral(ref_code)
             if referrer:
                 referred_by = referrer['user_id']
@@ -113,59 +106,52 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
     
     is_admin = db.is_admin(user.id)
-    
     if is_admin:
         await update.message.reply_text(
-            f"🔑 **Admin Access**\n\nWelcome, {user.first_name}! You are an administrator.",
+            f"🔑 **Admin Access**\n\nWelcome, {user.first_name}!",
             reply_markup=get_admin_menu()
         )
     else:
         await buyer_menu.show_buyer_menu(update, context)
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handles text messages and buttons from the buyer/admin menu."""
+    """Handles text messages and menu buttons."""
     if not update.message or not update.message.text:
         return
         
     text = update.message.text
     user_id = update.effective_user.id
     
-    if db.is_admin(user_id):
+    # Check if user is admin for routing
+    is_admin = db.is_admin(user_id)
+    
+    if is_admin:
         if text == "📊 SaaS Reports":
             await saas_admin_reports.show_saas_reports_menu(update, context)
+            return
         elif text == "📱 Accounts":
             await account_pool_manager.accounts_command(update, context)
+            return
         elif text == "🎁 Promo Codes":
             await promo_code_management.show_promo_management(update, context)
+            return
         elif text == "💰 Deposits":
             await admin_deposit_management.view_pending_deposits(update, context)
+            return
         elif text == "👔 Resellers":
             await admin_reseller_management.reseller_management_menu(update, context)
+            return
         elif text == "⚙️ Rates":
             await admin_rate_management.show_rate_management(update, context)
+            return
         elif text == "📢 Broadcast":
             await broadcast_admin.show_broadcast_menu(update, context)
+            return
         elif text == "👑 Admin Mgmt":
             await broadcast_admin.show_admin_management_menu(update, context)
-        elif text == "💎 Buy Plan":
-            await buyer_menu.buy_plan(update, context)
-        elif text == "💰 Deposit":
-            await buyer_menu.deposit(update, context)
-        elif text == "📋 My Plans":
-            await plan_management.show_my_plans(update, context)
-        elif text == "📊 Plan History":
-            await plan_management.show_plan_history(update, context)
-        elif text == "🎁 Referral Program":
-            await buyer_menu.buyer_referral(update, context)
-        elif text == "👔 Reseller Panel":
-            await buyer_menu.reseller_panel(update, context)
-        elif text == "💬 Support":
-            await buyer_support_handler(update, context) # FIXED
-        else:
-             await update.message.reply_text("Please use the admin menu buttons or /start.")
-        return
+            return
 
-    # --- Buyer Menu Handling ---
+    # Buyer Menu Logic
     if text == "💎 Buy Plan":
         await buyer_menu.buy_plan(update, context)
     elif text == "💰 Deposit":
@@ -179,24 +165,24 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif text == "👔 Reseller Panel":
         await buyer_menu.reseller_panel(update, context)
     elif text == "💬 Support":
-        await buyer_support_handler(update, context) # FIXED
+        await buyer_support_handler(update, context)
     elif text == "🔙 Back to Buyer Menu":
         await buyer_menu.show_buyer_menu(update, context)
     else:
         await update.message.reply_text("Please use the menu buttons or /start.")
 
-
 def main():
-    """Starts the Buyer Bot (SaaS Bot)."""
+    """Starts the Buyer Bot."""
+    # Ensure database schema is ready before any workers start
     try:
         db.init_schema()
-        logger.info("Database schema initialized")
+        logger.info("Database schema initialized successfully")
     except Exception as e:
         logger.error(f"Failed to initialize database: {e}")
         return
     
     if not BUYER_BOT_TOKEN:
-        logger.error("BUYER_BOT_TOKEN not found in environment variables!")
+        logger.error("BUYER_BOT_TOKEN not found!")
         return
     
     application = Application.builder().token(BUYER_BOT_TOKEN).build()
@@ -226,7 +212,6 @@ def main():
 
     # --- Command Handlers ---
     application.add_handler(CommandHandler("start", start))
-    
     application.add_handler(CommandHandler("accounts", account_pool_manager.accounts_command))
     application.add_handler(CommandHandler("removeaccount", account_pool_manager.remove_account_command))
     application.add_handler(CommandHandler("verifydep", admin_deposit_management.verify_deposit_command))
@@ -241,6 +226,7 @@ def main():
     application.add_handler(CallbackQueryHandler(admin_back_handler, pattern="^admin_back_from_rates$"))
     application.add_handler(CallbackQueryHandler(admin_back_handler, pattern="^admin_back$"))
     
+    # SaaS Report Callbacks
     application.add_handler(CallbackQueryHandler(saas_admin_reports.show_saas_reports_menu, pattern="^saas_reports$"))
     application.add_handler(CallbackQueryHandler(saas_admin_reports.show_payment_reports, pattern="^saas_payments$"))
     application.add_handler(CallbackQueryHandler(saas_admin_reports.show_payment_details, pattern="^payments_"))
@@ -249,18 +235,21 @@ def main():
     application.add_handler(CallbackQueryHandler(saas_admin_reports.show_export_menu, pattern="^saas_export$"))
     application.add_handler(CallbackQueryHandler(saas_admin_reports.export_csv_data, pattern="^export_"))
     
+    # Admin Manage Callbacks
     application.add_handler(CallbackQueryHandler(broadcast_admin.show_admin_management_menu, pattern="^admin_manage$"))
     application.add_handler(CallbackQueryHandler(broadcast_admin.view_admins, pattern="^admin_view$"))
     application.add_handler(CallbackQueryHandler(broadcast_admin.view_admin_logs, pattern="^admin_logs$"))
     
+    # Plan Management Callbacks
     application.add_handler(CallbackQueryHandler(admin_rate_management.show_rate_management, pattern="^show_rates$"))
     application.add_handler(CallbackQueryHandler(buyer_menu.show_buyer_menu, pattern="^buyer_back$"))
-    
     application.add_handler(CallbackQueryHandler(plan_management.back_to_plans, pattern="^plans_back$"))
     application.add_handler(CallbackQueryHandler(plan_management.view_plan_details, pattern="^plan_view_"))
+    
+    # CRITICAL: Unique patterns for plan termination to avoid 'Duration' prompt conflict
     application.add_handler(CallbackQueryHandler(plan_management.renew_plan, pattern="^plan_renew_"))
     application.add_handler(CallbackQueryHandler(plan_management.cancel_plan, pattern="^plan_cancel_"))
-    application.add_handler(CallbackQueryHandler(plan_management.confirm_cancel_plan, pattern="^confirm_cancel_"))
+    application.add_handler(CallbackQueryHandler(plan_management.confirm_cancel_plan, pattern="^conf_term_")) # Matches updated plan_management pattern
     
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     

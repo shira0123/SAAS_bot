@@ -21,9 +21,65 @@ db = Database()
 
 CHANGE_DELAY, RENEW_PLAN = range(2)
 
+async def cancel_plan(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Cancel an existing plan"""
+    query = update.callback_query
+    await query.answer()
+    
+    # Extract order ID from callback data: plan_cancel_{id}
+    order_id = int(query.data.split('_')[2])
+    order = db.get_order_by_id(order_id)
+    
+    if not order:
+        await query.edit_message_text("❌ Plan not found.")
+        return
+        
+    user_id = query.from_user.id
+    if order['user_id'] != user_id:
+        await query.edit_message_text("❌ This plan doesn't belong to you.")
+        return
+    
+    # Unique callback patterns to avoid conflict with buy_plan cancellation
+    keyboard = [
+        [
+            InlineKeyboardButton("✅ Yes, Cancel", callback_data=f"conf_term_{order_id}"),
+            InlineKeyboardButton("❌ No, Keep It", callback_data="plans_back")
+        ]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await query.edit_message_text(
+        f"⚠️ **Cancel Plan?**\n\n"
+        f"Are you sure you want to cancel Plan #{order_id}?\n\n"
+        f"This action cannot be undone. The plan will stop immediately.",
+        reply_markup=reply_markup,
+        parse_mode='Markdown'
+    )
+
+async def confirm_cancel_plan(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Confirm plan cancellation"""
+    query = update.callback_query
+    await query.answer()
+    
+    # Extract order ID from unique pattern: conf_term_{id}
+    order_id = int(query.data.split('_')[2])
+    
+    # Update status in DB
+    db.update_order_status(order_id, 'cancelled')
+    
+    await query.edit_message_text(
+        f"✅ **Plan Cancelled**\n\n"
+        f"Plan #{order_id} has been cancelled successfully.",
+        parse_mode='Markdown'
+    )
+
 async def show_my_plans(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Show user's active plans"""
     user_id = update.effective_user.id
+    
+    # If this was a button click, we should delete the previous message to keep it clean
+    if update.callback_query:
+        await update.callback_query.message.delete()
     
     active_orders = db.get_user_active_orders(user_id)
     
@@ -51,17 +107,16 @@ async def show_my_plans(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if expires_at:
                 days_left = max(0, (expires_at - datetime.now()).days)
             
-            if order['plan_type'].startswith('limited'):
-                # NEW: Daily Quota Display
+            # --- LOGIC FIX: Check keys for Limited/Unlimited ---
+            if 'per_day' in order['plan_type']: # Unlimited
+                progress = f"{order.get('delivered_posts', 0)} posts delivered (Unlimited)"
+            else: # Limited
                 daily_limit = order.get('daily_posts_limit', 0)
                 daily_count = order.get('daily_delivery_count', 0)
                 last_date = order.get('last_delivery_date')
-                if last_date != date.today(): # Reset if it's a new day
+                if last_date != date.today(): 
                     daily_count = 0
-                progress = f"Today: {daily_count}/{daily_limit} posts | Total: {order.get('delivered_posts', 0)}/{order['total_posts']} posts"
-            else:
-                # Unlimited Plan
-                progress = f"{order.get('delivered_posts', 0)} posts delivered"
+                progress = f"Today: {daily_count}/{daily_limit} | Total: {order.get('delivered_posts', 0)} posts"
                 
             timing = f"⏳ Expires: {expiry_str} ({days_left} days left)"
             
@@ -90,11 +145,9 @@ async def show_my_plans(update: Update, context: ContextTypes.DEFAULT_TYPE):
         keyboard = [
             [InlineKeyboardButton("📊 View Details", callback_data=f"plan_view_{order['id']}")],
             [InlineKeyboardButton("⏱️ Change Drip-Feed", callback_data=f"plan_delay_{order['id']}")],
-            # [InlineKeyboardButton("🔄 Renew Plan", callback_data=f"plan_renew_{order['id']}")], # TODO
             [InlineKeyboardButton("❌ Cancel Plan", callback_data=f"plan_cancel_{order['id']}")],
         ]
         
-        # Cannot change delay on one-time jobs
         if order['duration'] == 0:
             keyboard.pop(1) 
             
@@ -141,7 +194,7 @@ async def view_plan_details(update: Update, context: ContextTypes.DEFAULT_TYPE):
 • Expires: {expiry_str}
 • Duration: {order['duration']} days
 """
-        if order['plan_type'].startswith('limited'):
+        if 'per_day' not in order['plan_type']: # Limited
              message += f"""
 **Delivery Settings:**
 • Posts per day: {order['daily_posts_limit']}
@@ -152,7 +205,7 @@ async def view_plan_details(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else: # Unlimited
             message += f"""
 **Delivery Settings:**
-• Views/Reactions per day: {order['views_per_post']}
+• Views/Reactions per post: {order['views_per_post']}
 • Posts per day: Unlimited
 • Total delivered so far: {order.get('delivered_posts', 0)}
 """
@@ -234,11 +287,9 @@ async def receive_new_delay(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if new_drip_feed_hours > 0:
             total_seconds = new_drip_feed_hours * 3600
             
-            # For daily plans, quantity is views_per_post (for unlimited)
-            # or views_per_post * daily_posts_limit (for limited)
-            if order['plan_type'].startswith('limited'):
+            if 'limited' in order['plan_type']:
                 quantity_per_period = order['views_per_post'] * order['daily_posts_limit']
-            else: # Unlimited
+            else: # Unlimited or Join/Leave
                 quantity_per_period = order['views_per_post']
 
             if quantity_per_period > 0:
@@ -262,20 +313,6 @@ async def receive_new_delay(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "❌ Please enter a valid number between 0 and 72."
         )
         return CHANGE_DELAY
-
-async def renew_plan(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Renew an existing plan (Placeholder)"""
-    query = update.callback_query
-    await query.answer()
-    
-    order_id = int(query.data.split('_')[2])
-    
-    await query.edit_message_text(
-        f"🔄 **Renew Plan**\n\n"
-        f"Plan #{order_id} renewal feature will be implemented soon!\n\n"
-        f"For now, please create a new plan using the 💎 Buy Plan button.",
-        parse_mode='Markdown'
-    )
 
 async def cancel_plan(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Cancel an existing plan"""
@@ -364,15 +401,27 @@ async def back_to_plans(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Callback for 'Back to Plans' button"""
     query = update.callback_query
     await query.answer()
-    # This is a bit of a hack; we just re-send the main "My Plans" message
-    # We need to send it as a new message, so we reply to the original user
-    await query.message.delete()
-    # Find the original message that triggered the "My Plans" button
-    original_message = update.callback_query.message.reply_to_message
-    if not original_message:
-        # Fallback if the original message can't be found
-        original_message = update.callback_query.message
-    await show_my_plans(original_message, context)
+    
+    # Correctly call show_my_plans using the original update
+    await show_my_plans(update, context)
+
+async def renew_plan(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Handles the 'Renew Plan' callback. 
+    Currently a placeholder to prevent bot crashes.
+    """
+    query = update.callback_query
+    await query.answer()
+    
+    order_id = int(query.data.split('_')[2])
+    
+    await query.edit_message_text(
+        f"🔄 **Renew Plan #{order_id}**\n\n"
+        f"The renewal feature is currently under maintenance.\n\n"
+        f"To continue service, please purchase a new plan using the 💎 **Buy Plan** button from the main menu.",
+        parse_mode='Markdown',
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back to Plans", callback_data="plans_back")]])
+    )
 
 
 def get_plan_management_handler():

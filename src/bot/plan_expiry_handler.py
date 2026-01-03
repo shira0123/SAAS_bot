@@ -1,231 +1,121 @@
 import sys
 import os
-
 # Add project root to path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../../')))
 import asyncio
 import logging
-from telethon import TelegramClient
-from telethon.sessions import StringSession
-from telethon.tl.functions.channels import LeaveChannelRequest
+from pyrogram import Client
 from src.database.database import Database
-from src.database.config import TELEGRAM_API_ID, TELEGRAM_API_HASH, ADMIN_IDS
-from datetime import datetime, timedelta
+from src.database.config import TELEGRAM_API_ID, TELEGRAM_API_HASH, BUYER_BOT_TOKEN
 from telegram import Bot
-from src.database.config import BUYER_BOT_TOKEN as BOT_TOKEN
+from datetime import datetime
 
-logging.basicConfig(
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.INFO
-)
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 class PlanExpiryHandler:
     def __init__(self):
         self.db = Database()
         self.bot = None
-        
+
     async def initialize_bot(self):
-        """Initialize Telegram bot for notifications"""
         if not self.bot:
-            self.bot = Bot(token=BOT_TOKEN)
-    
-    async def send_expiry_reminder(self, user_id, order, days_until_expiry):
-        """Send expiry reminder notification to user"""
+            self.bot = Bot(token=BUYER_BOT_TOKEN)
+
+    async def send_expiry_reminder(self, user_id, order, days_left):
+        """Send warning notification"""
         await self.initialize_bot()
-        
         try:
-            plan_type_display = {
-                'unlimited_views': '💎 Unlimited Views',
-                'limited_views': '🎯 Limited Views',
-                'unlimited_reactions': '❤️ Unlimited Reactions',
-                'limited_reactions': '🎪 Limited Reactions'
-            }.get(order['plan_type'], order['plan_type'])
-            
-            if days_until_expiry > 0:
-                message = f"""
-⏰ **Plan Expiry Reminder**
-
-Your plan is expiring soon!
-
-📊 Plan #{order['id']} - {plan_type_display}
-📺 Channel: @{order['channel_username']}
-⏳ Expires in: **{days_until_expiry} day(s)**
-
-💡 **What happens next:**
-• Your plan will expire on {order['expires_at'].strftime('%Y-%m-%d %H:%M')}
-• You have a 3-day grace period to renew
-• After the grace period, accounts will leave the channel
-
-🔄 **To renew your plan:**
-Use the "My Plans" button to renew before it expires!
-"""
-            else:
-                message = f"""
-⚠️ **Plan Expired**
-
-Your plan has expired today!
-
-📊 Plan #{order['id']} - {plan_type_display}
-📺 Channel: @{order['channel_username']}
-
-💡 **Grace Period:**
-• You have 3 days to renew this plan
-• If not renewed, accounts will leave the channel
-• Use "My Plans" to renew now!
-"""
-            
-            await self.bot.send_message(chat_id=user_id, text=message, parse_mode='Markdown')
-            logger.info(f"Sent expiry reminder to user {user_id} for order {order['id']}")
-            
+            msg = (
+                f"⏰ **Plan Expiry Reminder**\n\n"
+                f"Plan #{order['id']} ({order['plan_type']})\n"
+                f"Channel: @{order['channel_username']}\n"
+                f"Expires in: **{days_left} day(s)**\n\n"
+                f"Please renew via 'My Plans' to avoid service interruption."
+            )
+            await self.bot.send_message(chat_id=user_id, text=msg, parse_mode='Markdown')
         except Exception as e:
-            logger.error(f"Error sending expiry reminder to user {user_id}: {e}")
-    
-    async def check_and_send_reminders(self):
-        """Check for orders that need expiry reminders and send notifications"""
-        logger.info("Checking for orders needing expiry reminders...")
-        
-        active_orders = self.db.get_active_orders()
-        
-        for order in active_orders:
-            if not order.get('expires_at'):
-                continue
-            
-            expires_at = order['expires_at']
-            now = datetime.now()
-            days_until_expiry = (expires_at - now).days
-            
-            if days_until_expiry in [3, 1]:
-                await self.send_expiry_reminder(order['user_id'], order, days_until_expiry)
-            
-            elif days_until_expiry <= 0 and days_until_expiry >= -3:
-                if days_until_expiry == 0:
-                    await self.send_expiry_reminder(order['user_id'], order, 0)
-                
-                continue
-            
-            elif days_until_expiry < -3:
-                logger.info(f"Order {order['id']} is past grace period, triggering auto-leave")
-                await self.handle_expired_order_auto_leave(order)
-    
+            logger.error(f"Failed to send reminder: {e}")
+
+    async def send_final_expiry_notification(self, user_id, order, leave_count):
+        """Send final notification after accounts leave"""
+        await self.initialize_bot()
+        try:
+            msg = (
+                f"❌ **Plan Expired**\n\n"
+                f"Plan #{order['id']} for @{order['channel_username']} has ended.\n"
+                f"📉 {leave_count} accounts have left the channel.\n\n"
+                f"To continue, please buy a new plan."
+            )
+            await self.bot.send_message(chat_id=user_id, text=msg, parse_mode='Markdown')
+        except Exception as e:
+            logger.error(f"Failed to send final note: {e}")
+
     async def handle_expired_order_auto_leave(self, order):
-        """Handle expired order by making accounts leave the channel"""
         order_id = order['id']
-        channel_username = order['channel_username']
+        channel = order['channel_username']
         
-        logger.info(f"Processing auto-leave for expired order {order_id}")
-        
+        # Get accounts that worked on this order
         usage_logs = self.db.connection.cursor()
         usage_logs.execute("""
-            SELECT DISTINCT account_id 
-            FROM account_usage_logs
-            WHERE order_id = %s AND action_type IN ('channel_join', 'view_delivery', 'reaction_delivery')
+            SELECT DISTINCT account_id FROM account_usage_logs 
+            WHERE order_id = %s AND action_type IN ('channel_join', 'join')
         """, (order_id,))
-        account_ids = [row['account_id'] for row in usage_logs.fetchall()]
+        rows = usage_logs.fetchall()
+        ids = [row['account_id'] for row in rows]
         usage_logs.close()
         
-        logger.info(f"Found {len(account_ids)} accounts to remove from channel {channel_username}")
-        
-        leave_count = 0
-        for account_id in account_ids:
+        left_count = 0
+        for acc_id in ids:
+            account = self.db.get_account_by_id(acc_id)
+            if not account: continue
+            
+            # Using Pyrogram to leave
             try:
-                account = self.db.get_account_by_id(account_id)
-                if not account:
-                    continue
-                
-                session_string = account['session_string']
-                
-                client = TelegramClient(
-                    StringSession(session_string),
-                    TELEGRAM_API_ID,
-                    TELEGRAM_API_HASH
+                client = Client(
+                    name=f"lv_{acc_id}",
+                    api_id=int(TELEGRAM_API_ID),
+                    api_hash=TELEGRAM_API_HASH,
+                    session_string=account['session_string'],
+                    in_memory=True,
+                    no_updates=True
                 )
                 await client.connect()
-                
-                if await client.is_user_authorized():
-                    try:
-                        entity = await client.get_entity(channel_username)
-                        await client(LeaveChannelRequest(entity))
-                        
-                        self.db.log_account_usage(
-                            account_id, order_id, channel_username,
-                            'channel_leave', success=True
-                        )
-                        
-                        cursor = self.db.connection.cursor()
-                        cursor.execute("""
-                            UPDATE sold_accounts
-                            SET join_count = GREATEST(0, join_count - 1)
-                            WHERE id = %s
-                        """, (account_id,))
-                        cursor.close()
-                        
-                        leave_count += 1
-                        logger.info(f"Account {account_id} left channel {channel_username}")
-                        
-                    except Exception as e:
-                        logger.error(f"Error leaving channel with account {account_id}: {e}")
-                        self.db.log_account_usage(
-                            account_id, order_id, channel_username,
-                            'channel_leave', success=False, error_message=str(e)
-                        )
-                
+                await client.leave_chat(channel)
+                left_count += 1
+                self.db.decrement_account_join_count(acc_id)
+                self.db.log_account_usage(acc_id, order_id, channel, 'leave', True)
                 await client.disconnect()
-                await asyncio.sleep(2)
-                
             except Exception as e:
-                logger.error(f"Error processing account {account_id} for auto-leave: {e}")
-                continue
-        
-        logger.info(f"Auto-leave complete for order {order_id}: {leave_count} accounts left the channel")
+                logger.error(f"Leave failed {acc_id}: {e}")
         
         self.db.update_order_status(order_id, 'expired')
-        
-        await self.send_final_expiry_notification(order['user_id'], order, leave_count)
-    
-    async def send_final_expiry_notification(self, user_id, order, leave_count):
-        """Send final notification after auto-leave"""
-        await self.initialize_bot()
-        
-        try:
-            message = f"""
-❌ **Plan Expired**
+        await self.send_final_expiry_notification(order['user_id'], order, left_count)
 
-Your plan has been terminated after the grace period.
-
-📊 Plan #{order['id']}
-📺 Channel: @{order['channel_username']}
-👥 {leave_count} accounts have left the channel
-
-💡 To continue service, please purchase a new plan using the 💎 Buy Plan button.
-"""
-            
-            await self.bot.send_message(chat_id=user_id, text=message, parse_mode='Markdown')
-            logger.info(f"Sent final expiry notification to user {user_id} for order {order['id']}")
-            
-        except Exception as e:
-            logger.error(f"Error sending final expiry notification to user {user_id}: {e}")
-    
     async def run(self):
-        """Main scheduler loop - runs every hour"""
-        logger.info("Plan Expiry Handler started")
-        
+        logger.info("Plan Expiry Handler (Pyrogram) Started")
         while True:
             try:
-                await self.check_and_send_reminders()
+                active_orders = self.db.get_active_orders()
+                now = datetime.now()
                 
-                await asyncio.sleep(3600)
-                
-            except Exception as e:
-                logger.error(f"Error in expiry handler loop: {e}")
-                await asyncio.sleep(600)
+                for order in active_orders:
+                    if not order.get('expires_at'): continue
+                    
+                    days_until_expiry = (order['expires_at'] - now).days
+                    
+                    # 1. Send Reminders (3 days or 1 day left)
+                    if days_until_expiry in [3, 1]:
+                        await self.send_expiry_reminder(order['user_id'], order, days_until_expiry)
 
-async def main():
-    handler = PlanExpiryHandler()
-    try:
-        await handler.run()
-    except KeyboardInterrupt:
-        logger.info("Expiry handler interrupted by user")
+                    # 2. Handle Expiry (Grace period check)
+                    if days_until_expiry < -3:
+                        await self.handle_expired_order_auto_leave(order)
+                
+                await asyncio.sleep(3600 * 4) # Run every 4 hours to be safe
+            except Exception as e:
+                logger.error(f"Expiry Loop Error: {e}")
+                await asyncio.sleep(60)
 
 if __name__ == '__main__':
-    asyncio.run(main())
+    asyncio.run(PlanExpiryHandler().run())
